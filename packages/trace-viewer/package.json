@@ -3,6 +3,16 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "scripts": {
+    "dev": "vite dev -c ./vite.config.ts --port 5173 --strictPort",
+    "build:sw": "vite build -c ./vite.sw.config.ts",
+    "build": "npm run build:sw && vite build -c ./vite.config.ts",
+    "preview": "vite preview -c ./vite.config.ts --port 4173 --strictPort",
+    "test:smoke": "node -e \"const http=require('http');http.get('http://localhost:4173/',res=>{let d='';res.on('data',c=>d+=c);res.on('end',()=>{if(!d.includes('TestZeus Trace Viewer')){console.error('Smoke failed');process.exit(1);}console.log('OK');})}).on('error',e=>{console.error(e);process.exit(1);});\"",
+    "docker:build": "docker build -f ./Dockerfile -t trace-viewer:local ../..",
+    "docker:run": "docker run --rm -p 8080:80 trace-viewer:local",
+    "docker:up": "npm run docker:build && npm run docker:run"
+  },
   "dependencies": {
     "idb-keyval": "^6.2.2",
     "yaml": "^2.6.0"
