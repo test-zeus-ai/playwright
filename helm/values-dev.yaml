@@ -1,0 +1,103 @@
+service-template:
+  fullnameOverride: "testzeus-traceviewer"
+  replicaCount: 1
+
+  serviceAccount:
+    create: true
+    name: "testzeus-traceviewer-sa"
+    automount: false  # nginx does not call the K8s API
+
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+
+  containers:
+    - name: trace-viewer
+      image:
+        repository:   
+        tag: REPLACED_BY_CI
+        pullPolicy: Always
+      ports:
+        - containerPort: 80
+      env:
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: "80"
+        - name: NODE_ENV
+          value: development
+      resources:
+        requests:
+          cpu: "25m"
+          memory: "32Mi"
+        limits:
+          cpu: "100m"
+          memory: "128Mi"
+      readinessProbe:
+        httpGet:
+          path: /
+          port: 80
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /
+          port: 80
+        initialDelaySeconds: 10
+        periodSeconds: 20
+        failureThreshold: 3
+      securityContext:
+        allowPrivilegeEscalation: false
+        runAsNonRoot: true
+        runAsUser: 101  # nginx user
+        runAsGroup: 101
+        capabilities:
+          drop:
+            - ALL
+
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 5
+    targetCPUUtilizationPercentage: 80
+
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+  httpRoute:
+    enabled: true
+    parentRefs:
+      - name: main-gateway
+        namespace: gateway-infra
+        sectionName: http
+    hostnames:
+      - "tzviewer.dev.testzeus.app"
+    rules:
+      - matches:
+          - path:
+              value: /
+              type: PathPrefix
+
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: testzeus-traceviewer
+            topologyKey: kubernetes.io/hostname
+
+  tolerations:
+    - key: "cloud.google.com/gke-spot"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"

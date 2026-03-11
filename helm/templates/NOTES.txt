@@ -1,0 +1,32 @@
+{{- $values := index .Values "service-template" -}}
+1. Get the application URL by running these commands:
+{{- if $values.service }}
+  {{- if contains "LoadBalancer" ($values.service.type | default "ClusterIP") }}
+    NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+          You can watch the status by running 'kubectl get svc -w {{ .Release.Name }}-service-template'
+    export SERVICE_IP=$(kubectl get svc --namespace {{ .Release.Namespace }} {{ .Release.Name }}-service-template --template "{{"{{ range (index .status.loadBalancer.ingress 0) }}{{.}}{{ end }}"}}")
+    echo http://$SERVICE_IP:{{ $values.service.port | default 80 }}
+  {{- else if contains "ClusterIP" ($values.service.type | default "ClusterIP") }}
+    {{- $appName := $values.fullnameOverride | default "service-template" -}}
+    export POD_NAME=$(kubectl get pods --namespace {{ .Release.Namespace }} -l "app.kubernetes.io/name={{ $appName }},app.kubernetes.io/instance={{ .Release.Name }}" -o jsonpath="{.items[0].metadata.name}")
+    echo "Visit http://127.0.0.1:8080 to use your application"
+    {{- $containerPort := 8080 -}}
+    {{- if $values.containers -}}
+      {{- if (index $values.containers 0).ports -}}
+        {{- $containerPort = (index (index $values.containers 0).ports 0).containerPort | default 8080 -}}
+      {{- end -}}
+    {{- end -}}
+    kubectl --namespace {{ .Release.Namespace }} port-forward $POD_NAME 8080:{{ $containerPort }}
+  {{- else if contains "NodePort" ($values.service.type | default "ClusterIP") }}
+    export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ .Release.Name }}-service-template)
+    export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+    echo http://$NODE_IP:$NODE_PORT
+  {{- end }}
+{{- end }}
+
+{{- if and $values.autoscaling (and $values.autoscaling.enabled (and $values.vpa $values.vpa.enabled)) }}
+WARNING: Both HPA and VPA are enabled. This is a conflicting configuration as both will try to manage resources for the same workload.
+{{- end }}
+{{- if and $values.persistentStorage (and $values.persistentStorage.enabled (eq $values.persistentStorage.accessMode "ReadWriteOnce") (gt (int ($values.replicaCount | default 1)) 1)) }}
+WARNING: persistentStorage is enabled with ReadWriteOnce access mode but replicaCount is greater than 1. Only one pod will be able to mount the volume.
+{{- end }}
