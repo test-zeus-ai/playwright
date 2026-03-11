@@ -86,13 +86,4 @@ service-template:
               value: /
               type: PathPrefix
 
-  affinity:
-    podAntiAffinity:
-      preferredDuringSchedulingIgnoredDuringExecution:
-        - weight: 100
-          podAffinityTerm:
-            labelSelector:
-              matchLabels:
-                app.kubernetes.io/name: testzeus-traceviewer
-            topologyKey: kubernetes.io/hostname
 

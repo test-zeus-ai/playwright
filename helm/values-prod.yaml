@@ -86,12 +86,4 @@ service-template:
               value: /
               type: PathPrefix
 
-  affinity:
-    podAntiAffinity:
-      # Hard rule in prod: pods MUST be on different nodes
-      requiredDuringSchedulingIgnoredDuringExecution:
-        - labelSelector:
-            matchLabels:
-              app.kubernetes.io/name: testzeus-traceviewer
-          topologyKey: kubernetes.io/hostname
 
