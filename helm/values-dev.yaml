@@ -96,8 +96,3 @@ service-template:
                 app.kubernetes.io/name: testzeus-traceviewer
             topologyKey: kubernetes.io/hostname
 
-  tolerations:
-    - key: "cloud.google.com/gke-spot"
-      operator: "Equal"
-      value: "true"
-      effect: "NoSchedule"
