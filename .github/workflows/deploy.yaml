@@ -5,6 +5,18 @@ on:
     branches:
       - dev
       - main
+    paths:
+      - .github/workflows/deploy.yaml
+      - helm/**
+      - package.json
+      - package-lock.json
+      - packages/injected/**
+      - packages/playwright-core/**
+      - packages/protocol/**
+      - packages/trace/**
+      - packages/trace-viewer/**
+      - packages/web/**
+      - utils/build/**
   workflow_dispatch:
 
 permissions:
@@ -85,6 +97,7 @@ jobs:
       GKE_CLUSTER: ${{ vars.GKE_DEV_CLUSTER }}
       GKE_LOCATION: ${{ vars.GKE_DEV_LOCATION }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID_DEV }}
+      HELM_REPO: ${{ vars.GAR_HELM_REPOSITORY_DEV }}
     steps:
       - uses: actions/checkout@v4
 
@@ -112,6 +125,10 @@ jobs:
             helm registry login -u oauth2accesstoken --password-stdin \
             "${GAR_LOCATION}-docker.pkg.dev"
 
+      - name: Select Helm repository for dev
+        run: |
+          sed -i "s|repository: \".*\"|repository: \"oci://${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT_ID}/${HELM_REPO}\"|" "${CHART_DIR}/Chart.yaml"
+
       - name: Helm dependency update
         run: helm dependency update "${CHART_DIR}"
 
@@ -137,6 +154,7 @@ jobs:
       GKE_CLUSTER: ${{ vars.GKE_PROD_CLUSTER }}
       GKE_LOCATION: ${{ vars.GKE_PROD_LOCATION }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID_PROD }}
+      HELM_REPO: ${{ vars.GAR_HELM_REPOSITORY_PROD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -163,6 +181,10 @@ jobs:
           gcloud auth print-access-token | \
             helm registry login -u oauth2accesstoken --password-stdin \
             "${GAR_LOCATION}-docker.pkg.dev"
+
+      - name: Select Helm repository for prod
+        run: |
+          sed -i "s|repository: \".*\"|repository: \"oci://${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT_ID}/${HELM_REPO}\"|" "${CHART_DIR}/Chart.yaml"
 
       - name: Helm dependency update
         run: helm dependency update "${CHART_DIR}"
