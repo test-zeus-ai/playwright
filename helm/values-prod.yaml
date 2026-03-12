@@ -14,8 +14,8 @@ service-template:
   containers:
     - name: trace-viewer
       image:
-        repository: REPLACED_BY_CI
-        tag: REPLACED_BY_CI
+        repository: "us-central1-docker.pkg.dev/GCP_PROJECT_ID_PROD/GAR_DOCKER_REPOSITORY_PROD"
+        tag: latest
         pullPolicy: Always
       ports:
         - containerPort: 80
@@ -86,4 +86,5 @@ service-template:
               value: /
               type: PathPrefix
 
-
+  secrets:
+    enabled: false # No secrets for trace-viewer yet
