@@ -75,8 +75,6 @@ jobs:
           IMAGE_REPO="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPO}/${SERVICE_NAME}"
           echo "image_tag=${IMAGE_TAG}" >>"${GITHUB_OUTPUT}"
           echo "image_repo=${IMAGE_REPO}" >>"${GITHUB_OUTPUT}"
-          echo "helm_repo=${HELM_REPO}" >>"${GITHUB_OUTPUT}"
-          echo "project_id=${PROJECT_ID}" >>"${GITHUB_OUTPUT}"
 
       - name: Build and push image
         uses: docker/build-push-action@v6
