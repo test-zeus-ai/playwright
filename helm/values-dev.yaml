@@ -28,11 +28,11 @@ service-template:
           value: development
       resources:
         requests:
-          cpu: "25m"
-          memory: "32Mi"
+          cpu: "250m"
+          memory: "512Mi"
         limits:
-          cpu: "100m"
-          memory: "128Mi"
+          cpu: "500m"
+          memory: "512Mi"
       readinessProbe:
         httpGet:
           path: /
@@ -67,7 +67,7 @@ service-template:
     parentRefs:
       - name: testzeus-gateway
         namespace: testzeus
-        sectionName: http
+        sectionName: https
     hostnames:
       - "tzviewer.dev.testzeus.app"
     rules:

@@ -3,8 +3,7 @@ name: Build and Deploy
 on:
   push:
     branches:
-      - dev
-      - main
+      - main-prod
     paths:
       - .github/workflows/deploy.yaml
       - helm/**
@@ -18,6 +17,12 @@ on:
       - packages/web/**
       - utils/build/**
   workflow_dispatch:
+    inputs:
+      deploy_prod:
+        description: "Deploy to production"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -46,8 +51,8 @@ jobs:
         id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ github.ref == 'refs/heads/main' && secrets.GCP_WIF_PROVIDER_PROD || secrets.GCP_WIF_PROVIDER_DEV }}
-          service_account: ${{ github.ref == 'refs/heads/main' && secrets.GCP_SA_PROD || secrets.GCP_SA_DEV }}
+          workload_identity_provider: ${{ github.ref == 'refs/heads/main-prod' && secrets.GCP_WIF_PROVIDER_PROD || secrets.GCP_WIF_PROVIDER_DEV }}
+          service_account: ${{ github.ref == 'refs/heads/main-prod' && secrets.GCP_SA_PROD || secrets.GCP_SA_DEV }}
           token_format: access_token
 
       - name: Setup gcloud
@@ -69,9 +74,8 @@ jobs:
         id: meta
         run: |
           IMAGE_TAG="${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}"
-          PROJECT_ID="${{ github.ref == 'refs/heads/main' && vars.GCP_PROJECT_ID_PROD || vars.GCP_PROJECT_ID_DEV }}"
-          GAR_REPO="${{ github.ref == 'refs/heads/main' && vars.GAR_DOCKER_REPOSITORY_PROD || vars.GAR_DOCKER_REPOSITORY_DEV }}"
-          HELM_REPO="${{ vars.GAR_HELM_REPOSITORY_PROD }}"
+          PROJECT_ID="${{ github.ref == 'refs/heads/main-prod' && vars.GCP_PROJECT_ID_PROD || vars.GCP_PROJECT_ID_DEV }}"
+          GAR_REPO="${{ github.ref == 'refs/heads/main-prod' && vars.GAR_DOCKER_REPOSITORY_PROD || vars.GAR_DOCKER_REPOSITORY_DEV }}"
           IMAGE_REPO="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPO}/${SERVICE_NAME}"
           echo "image_tag=${IMAGE_TAG}" >>"${GITHUB_OUTPUT}"
           echo "image_repo=${IMAGE_REPO}" >>"${GITHUB_OUTPUT}"
@@ -86,16 +90,101 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy-dev:
-    if: github.ref == 'refs/heads/dev'
+  helm4-compat:
+    if: github.ref == 'refs/heads/main-prod'
     needs: build
+    runs-on: ubuntu-latest
+    env:
+      TARGET_ENV: ${{ github.ref == 'refs/heads/main-prod' && 'prod' || 'dev' }}
+      VALUES_FILE: ${{ github.ref == 'refs/heads/main-prod' && 'values-prod.yaml' || 'values-dev.yaml' }}
+      DEPLOY_NAMESPACE: ${{ github.ref == 'refs/heads/main-prod' && 'testzeus-prod' || 'testzeus-dev' }}
+      GKE_CLUSTER: ${{ github.ref == 'refs/heads/main-prod' && vars.GKE_PROD_CLUSTER || vars.GKE_DEV_CLUSTER }}
+      GKE_LOCATION: ${{ github.ref == 'refs/heads/main-prod' && vars.GKE_PROD_LOCATION || vars.GKE_DEV_LOCATION }}
+      GCP_PROJECT_ID: ${{ github.ref == 'refs/heads/main-prod' && vars.GCP_PROJECT_ID_PROD || vars.GCP_PROJECT_ID_DEV }}
+      GAR_HELM_REPOSITORY: ${{ github.ref == 'refs/heads/main-prod' && vars.GAR_HELM_REPOSITORY_PROD || vars.GAR_HELM_REPOSITORY_DEV }}
+      GCP_SA: ${{ github.ref == 'refs/heads/main-prod' && secrets.GCP_SA_PROD || secrets.GCP_SA_DEV }}
+      GCP_WIF_PROVIDER: ${{ github.ref == 'refs/heads/main-prod' && secrets.GCP_WIF_PROVIDER_PROD || secrets.GCP_WIF_PROVIDER_DEV }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm 4 (compat check)
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.0.0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SA }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_LOCATION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Login Helm to GAR OCI registry
+        run: |
+          gcloud auth print-access-token | \
+            helm registry login -u oauth2accesstoken --password-stdin \
+            "${GAR_LOCATION}-docker.pkg.dev"
+
+      - name: Set Helm dependency repository (target env)
+        run: |
+          CHART_REPO="oci://${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_HELM_REPOSITORY}"
+          sed -i "/- name: service-template/,/repository:/ s#repository: \".*\"#repository: \"${CHART_REPO}\"#" "${CHART_DIR}/Chart.yaml"
+
+      - name: Helm dependency update (Helm 4)
+        run: helm dependency update "${CHART_DIR}"
+
+      - name: Helm lint (Helm 4)
+        run: helm lint "${CHART_DIR}" -f "${CHART_DIR}/${VALUES_FILE}"
+
+      - name: Helm template render (Helm 4)
+        run: |
+          helm template "${SERVICE_NAME}-helm4-compat" "${CHART_DIR}" \
+            -f "${CHART_DIR}/${VALUES_FILE}" \
+            --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
+            --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
+            --set-string service-template.serviceAccount.annotations.iam\\.gke\\.io/gcp-service-account=${{ env.GCP_SA }} \
+            > rendered-helm4.yaml
+
+      - name: Guard rendered manifest fields
+        run: |
+          if grep -nE '^[[:space:]]*(managedFields:|resourceVersion:|uid:|creationTimestamp:)$' rendered-helm4.yaml; then
+            echo "Forbidden metadata fields found in rendered output."
+            exit 1
+          fi
+          if grep -nE '^[[:space:]]*status:[[:space:]]*$' rendered-helm4.yaml; then
+            echo "Forbidden status field found in rendered output."
+            exit 1
+          fi
+
+      - name: Helm upgrade dry-run (Helm 4)
+        run: |
+          helm upgrade "${SERVICE_NAME}-helm4-compat" "${CHART_DIR}" \
+            -f "${CHART_DIR}/${VALUES_FILE}" \
+            --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
+            --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
+            --set-string service-template.serviceAccount.annotations.iam\\.gke\\.io/gcp-service-account=${{ env.GCP_SA }} \
+            --namespace "${DEPLOY_NAMESPACE}" \
+            --create-namespace \
+            --install \
+            --dry-run \
+            --server-side=false \
+            --debug
+
+  deploy-dev:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main-prod'
+    needs: [build, helm4-compat]
     runs-on: ubuntu-latest
     environment: dev
     env:
       GKE_CLUSTER: ${{ vars.GKE_DEV_CLUSTER }}
       GKE_LOCATION: ${{ vars.GKE_DEV_LOCATION }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID_DEV }}
-      HELM_REPO: ${{ vars.GAR_HELM_REPOSITORY_DEV }}
     steps:
       - uses: actions/checkout@v4
 
@@ -123,9 +212,10 @@ jobs:
             helm registry login -u oauth2accesstoken --password-stdin \
             "${GAR_LOCATION}-docker.pkg.dev"
 
-      - name: Select Helm repository for dev
+      - name: Set Helm dependency repository (dev)
         run: |
-          sed -i "s|repository: \".*\"|repository: \"oci://${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT_ID}/${HELM_REPO}\"|" "${CHART_DIR}/Chart.yaml"
+          CHART_REPO="oci://${GAR_LOCATION}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID_DEV }}/${{ vars.GAR_HELM_REPOSITORY_DEV }}"
+          sed -i "/- name: service-template/,/repository:/ s#repository: \".*\"#repository: \"${CHART_REPO}\"#" "${CHART_DIR}/Chart.yaml"
 
       - name: Helm dependency update
         run: helm dependency update "${CHART_DIR}"
@@ -140,19 +230,20 @@ jobs:
             --namespace "testzeus-dev" \
             --create-namespace \
             --install \
+            --wait \
             --rollback-on-failure \
+            --server-side=false \
             --timeout 5m
 
   deploy-prod:
-    if: github.ref == 'refs/heads/main'
-    needs: build
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main-prod' && github.event.inputs.deploy_prod == 'true'
+    needs: [build, helm4-compat]
     runs-on: ubuntu-latest
     environment: production
     env:
       GKE_CLUSTER: ${{ vars.GKE_PROD_CLUSTER }}
       GKE_LOCATION: ${{ vars.GKE_PROD_LOCATION }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID_PROD }}
-      HELM_REPO: ${{ vars.GAR_HELM_REPOSITORY_PROD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -180,9 +271,10 @@ jobs:
             helm registry login -u oauth2accesstoken --password-stdin \
             "${GAR_LOCATION}-docker.pkg.dev"
 
-      - name: Select Helm repository for prod
+      - name: Set Helm dependency repository (prod)
         run: |
-          sed -i "s|repository: \".*\"|repository: \"oci://${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT_ID}/${HELM_REPO}\"|" "${CHART_DIR}/Chart.yaml"
+          CHART_REPO="oci://${GAR_LOCATION}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID_PROD }}/${{ vars.GAR_HELM_REPOSITORY_PROD }}"
+          sed -i "/- name: service-template/,/repository:/ s#repository: \".*\"#repository: \"${CHART_REPO}\"#" "${CHART_DIR}/Chart.yaml"
 
       - name: Helm dependency update
         run: helm dependency update "${CHART_DIR}"
@@ -197,5 +289,7 @@ jobs:
             --namespace "testzeus-prod" \
             --create-namespace \
             --install \
+            --wait \
             --rollback-on-failure \
+            --server-side=false \
             --timeout 5m
