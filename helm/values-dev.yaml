@@ -47,14 +47,7 @@ service-template:
         initialDelaySeconds: 10
         periodSeconds: 20
         failureThreshold: 3
-      securityContext:
-        allowPrivilegeEscalation: false
-        runAsNonRoot: true
-        runAsUser: 101  # nginx user
-        runAsGroup: 101
-        capabilities:
-          drop:
-            - ALL
+      securityContext: {}
 
   service:
     enabled: true
