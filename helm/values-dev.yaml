@@ -72,9 +72,8 @@ service-template:
       - "tzviewer.dev.testzeus.app"
     rules:
       - matches:
-          - path:
-              value: /
-              type: PathPrefix
+          - path: /
+            pathType: PathPrefix
 
   secrets:
     enabled: false # No secrets for trace-viewer yet
