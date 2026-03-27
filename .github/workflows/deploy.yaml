@@ -148,7 +148,6 @@ jobs:
             -f "${CHART_DIR}/${VALUES_FILE}" \
             --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
             --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
-            --set-string service-template.serviceAccount.annotations.iam\\.gke\\.io/gcp-service-account=${{ env.GCP_SA }} \
             > rendered-helm4.yaml
 
       - name: Guard rendered manifest fields
@@ -168,7 +167,6 @@ jobs:
             -f "${CHART_DIR}/${VALUES_FILE}" \
             --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
             --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
-            --set-string service-template.serviceAccount.annotations.iam\\.gke\\.io/gcp-service-account=${{ env.GCP_SA }} \
             --namespace "${DEPLOY_NAMESPACE}" \
             --create-namespace \
             --install \
@@ -226,7 +224,6 @@ jobs:
             -f "${CHART_DIR}/values-dev.yaml" \
             --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
             --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
-            --set-string service-template.serviceAccount.annotations.iam\\.gke\\.io/gcp-service-account=${{ secrets.GCP_SA_DEV }} \
             --namespace "testzeus-dev" \
             --create-namespace \
             --install \
@@ -307,7 +304,6 @@ jobs:
             -f "${CHART_DIR}/values-prod.yaml" \
             --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
             --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
-            --set-string service-template.serviceAccount.annotations.iam\\.gke\\.io/gcp-service-account=${{ secrets.GCP_SA_PROD }} \
             --namespace "testzeus-prod" \
             --create-namespace \
             --install \
