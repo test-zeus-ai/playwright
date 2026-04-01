@@ -7,7 +7,7 @@ service-template:
     name: "testzeus-traceviewer-sa"
     automount: false  # nginx does not call the K8s API
     annotations:
-      iam.gke.io/gcp-service-account: "gke-runtime-dev3@dev3-testzeus.iam.gserviceaccount.com"
+      iam.gke.io/gcp-service-account: "gke-runtime-dev@dev-testzeus.iam.gserviceaccount.com"
 
   podSecurityContext:
     seccompProfile:
@@ -16,14 +16,14 @@ service-template:
   containers:
     - name: trace-viewer
       image:
-        repository: "us-central1-docker.pkg.dev/GCP_PROJECT_ID_DEV3/GAR_DOCKER_REPOSITORY_DEV3"
+        repository: "us-central1-docker.pkg.dev/GCP_PROJECT_ID_DEV/GAR_DOCKER_REPOSITORY_DEV"
         tag: latest
         pullPolicy: Always
       ports:
         - containerPort: 80
       env:
         - name: HOST
-          value: "eyJhbGciOiJFUzI1NiIsImtpZCI6IkVsWTBtZyJ9.eyJhdWQiOiJodHRwczovL2hsLmRldi50ZXN0emV1cy5hcHAiLCJleHAiOjQ5MjgzMTM3ODEsImdycGNfYnJvYWRjYXN0X2FkZHJlc3MiOiJoYXRjaGV0LXN0YWNrLWVuZ2luZTo3MDcwIiwiaWF0IjoxNzc0NzEzNzgxLCJpc3MiOiJodHRwczovL2hsLmRldi50ZXN0emV1cy5hcHAiLCJzZXJ2ZXJfdXJsIjoiaHR0cHM6Ly9obC5kZXYudGVzdHpldXMuYXBwIiwic3ViIjoiNzA3ZDA4NTUtODBhYi00ZTFmLWExNTYtZjFjNDU0NmNiZjUyIiwidG9rZW5faWQiOiJkN2VmNzMzNC00MWRmLTQwNTMtOTA3Ny03ZWQ3OWYwNTg4YjAifQ.trW5OLZVZfBQAC_cNiG3AjFLzUzb9bEfTnOQHvPveRn8B--o6_RgWMk2SwFClcoi4k_PloLRyae8hRHBK0OaPg"
+          value: "0.0.0.0"
         - name: PORT
           value: "80"
         - name: NODE_ENV
@@ -64,7 +64,7 @@ service-template:
         namespace: testzeus
         sectionName: https
     hostnames:
-      - "tzviewer.dev3.testzeus.app"
+      - "tzviewer.dev5.testzeus.app"
     rules:
       - matches:
           - path: /
