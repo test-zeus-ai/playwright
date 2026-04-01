@@ -1,4 +1,4 @@
-name: Build and Deploy
+name: Helm - GKE workflow
 
 on:
   push:
@@ -24,15 +24,16 @@ on:
         type: boolean
         default: false
       target_env:
-        description: "Deploy environment (dev2/dev3)"
+        description: "Deploy environment (dev/dev2/dev3)"
         required: false
-        default: "dev2"
+        default: "dev"
         type: choice
         options:
+          - dev
           - dev2
           - dev3
       branch:
-        description: "Branch to deploy (for dev2/dev3)"
+        description: "Branch to deploy (for dev/dev2/dev3)"
         required: false
         default: "main-prod"
 
@@ -354,3 +355,5 @@ jobs:
 #                 --no-enable-master-authorized-networks
 #             fi
 #           fi
+
+
