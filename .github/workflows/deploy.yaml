@@ -1,4 +1,4 @@
-name: Build and Deploy
+name: Helm - GKE workflow
 
 on:
   push:
@@ -24,15 +24,17 @@ on:
         type: boolean
         default: false
       target_env:
-        description: "Deploy environment (dev2/dev3)"
+        description: "Deploy environment (dev/dev2/dev3/main-prod)"
         required: false
-        default: "dev2"
+        default: "dev"
         type: choice
         options:
+          - dev
           - dev2
           - dev3
+          - main-prod
       branch:
-        description: "Branch to deploy (for dev2/dev3)"
+        description: "Branch to deploy (for dev/dev2/dev3/main-prod)"
         required: false
         default: "main-prod"
 
@@ -65,8 +67,8 @@ jobs:
         id: auth
         uses: google-github-actions/auth@v2
         with:
-          workload_identity_provider: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && secrets.GCP_WIF_PROVIDER_PROD || secrets.GCP_WIF_PROVIDER_DEV }}
-          service_account: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && secrets.GCP_SA_PROD || secrets.GCP_SA_DEV }}
+          workload_identity_provider: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && secrets.GCP_WIF_PROVIDER_PROD || secrets.GCP_WIF_PROVIDER_DEV }}
+          service_account: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && secrets.GCP_SA_PROD || secrets.GCP_SA_DEV }}
           token_format: access_token
 
       - name: Setup gcloud
@@ -89,8 +91,8 @@ jobs:
         run: |
           TS="$(date -u +%Y%m%d%H%M%S)"
           IMAGE_TAG="${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}-$TS"
-          PROJECT_ID="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && vars.GCP_PROJECT_ID_PROD || vars.GCP_PROJECT_ID_DEV }}"
-          GAR_REPO="${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && vars.GAR_DOCKER_REPOSITORY_PROD || vars.GAR_DOCKER_REPOSITORY_DEV }}"
+          PROJECT_ID="${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GCP_PROJECT_ID_PROD || vars.GCP_PROJECT_ID_DEV }}"
+          GAR_REPO="${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GAR_DOCKER_REPOSITORY_PROD || vars.GAR_DOCKER_REPOSITORY_DEV }}"
           IMAGE_REPO="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPO}/${SERVICE_NAME}"
           echo "image_tag=${IMAGE_TAG}" >>"${GITHUB_OUTPUT}"
           echo "image_repo=${IMAGE_REPO}" >>"${GITHUB_OUTPUT}"
@@ -110,15 +112,15 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     env:
-      TARGET_ENV: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && 'prod' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_env != '' && github.event.inputs.target_env) || 'dev' }}
-      VALUES_FILE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && 'values-prod.yaml' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_env != '' && format('values-{0}.yaml', github.event.inputs.target_env)) || 'values-dev.yaml' }}
-      DEPLOY_NAMESPACE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && 'testzeus-prod' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_env != '' && format('testzeus-{0}', github.event.inputs.target_env)) || 'testzeus-dev' }}
-      GKE_CLUSTER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && vars.GKE_PROD_CLUSTER || vars.GKE_DEV_CLUSTER }}
-      GKE_LOCATION: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && vars.GKE_PROD_LOCATION || vars.GKE_DEV_LOCATION }}
-      GCP_PROJECT_ID: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && vars.GCP_PROJECT_ID_PROD || vars.GCP_PROJECT_ID_DEV }}
-      GAR_HELM_REPOSITORY: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && vars.GAR_HELM_REPOSITORY_PROD || vars.GAR_HELM_REPOSITORY_DEV }}
-      GCP_SA: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && secrets.GCP_SA_PROD || secrets.GCP_SA_DEV }}
-      GCP_WIF_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'true' && secrets.GCP_WIF_PROVIDER_PROD || secrets.GCP_WIF_PROVIDER_DEV }}
+      TARGET_ENV: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && 'prod' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_env != '' && github.event.inputs.target_env) || 'dev' }}
+      VALUES_FILE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && 'values-prod.yaml' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_env != '' && format('values-{0}.yaml', github.event.inputs.target_env)) || 'values-dev.yaml' }}
+      DEPLOY_NAMESPACE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && 'testzeus-prod' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_env != '' && format('testzeus-{0}', github.event.inputs.target_env)) || 'testzeus-dev' }}
+      GKE_CLUSTER: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GKE_PROD_CLUSTER || vars.GKE_DEV_CLUSTER }}
+      GKE_LOCATION: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GKE_PROD_LOCATION || vars.GKE_DEV_LOCATION }}
+      GCP_PROJECT_ID: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GCP_PROJECT_ID_PROD || vars.GCP_PROJECT_ID_DEV }}
+      GAR_HELM_REPOSITORY: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GAR_HELM_REPOSITORY_PROD || vars.GAR_HELM_REPOSITORY_DEV }}
+      GCP_SA: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && secrets.GCP_SA_PROD || secrets.GCP_SA_DEV }}
+      GCP_WIF_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && secrets.GCP_WIF_PROVIDER_PROD || secrets.GCP_WIF_PROVIDER_DEV }}
     steps:
       - uses: actions/checkout@v4
 
@@ -190,7 +192,7 @@ jobs:
             --debug
 
   deploy-dev:
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main-prod') || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'false' && (github.event.inputs.target_env == 'dev2' || github.event.inputs.target_env == 'dev3'))
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main-prod') || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'false' && (github.event.inputs.target_env == 'dev' || github.event.inputs.target_env == 'dev2' || github.event.inputs.target_env == 'dev3'))
     needs: [build, helm4-compat]
     runs-on: ubuntu-latest
     environment: dev
@@ -252,7 +254,7 @@ jobs:
             --timeout 5m
 
   deploy-prod:
-    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main-prod' && github.event.inputs.deploy_prod == 'true'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main-prod' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod')
     needs: [build, helm4-compat]
     runs-on: ubuntu-latest
     environment: production
