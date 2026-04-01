@@ -18,3 +18,43 @@ helm upgrade --install traceviewer ./helm -f ./helm/values-prod.yaml --namespace
 
 - **Ingress**: Managed through Gateway API in the target environment.
 - **Workload Identity**: `values-dev.yaml` and `values-prod.yaml` annotate the Kubernetes service account with the shared runtime GSA for each environment. The matching IAM `roles/iam.workloadIdentityUser` binding must exist in GCP.
+
+## Dev2/Dev3 Deploys
+
+To deploy into the shared dev2/dev3 namespaces:
+
+```bash
+# Dev2
+helm upgrade <release-name> . -f values-dev2.yaml -n testzeus-dev2 --install
+
+# Dev3
+helm upgrade <release-name> . -f values-dev3.yaml -n testzeus-dev3 --install
+```
+
+These values files are intended for branch overrides in dev2/dev3 while `dev` remains the fixed dev environment.
+
+## Deployment Guide: dev / dev2 / dev3
+
+### dev (testzeus-dev)
+- **Branch:** `dev` (fixed)
+- **Trigger:** push to `dev`
+- **Namespace:** `testzeus-dev`
+- **Values:** `values-dev.yaml`
+
+### dev2 / dev3 (branch overrides)
+- **Trigger:** GitHub Actions `workflow_dispatch`
+- **Namespaces:** `testzeus-dev2`, `testzeus-dev3`
+- **Values:** `values-dev2.yaml`, `values-dev3.yaml`
+- **Branch:** any branch provided in the workflow inputs
+
+**Workflow inputs:**
+- `target_env`: `dev2` or `dev3`
+- `branch`: the branch you want to deploy (e.g. `feature/foo`)
+
+**Example:**
+- `target_env=dev2`, `branch=feature/foo`
+- `target_env=dev3`, `branch=bugfix/streaming`
+
+Notes:
+- `dev` remains fixed to `testzeus-dev` and always deploys from `dev` branch.
+- `dev2`/`dev3` are intended for branch testing only.

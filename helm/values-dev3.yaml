@@ -1,0 +1,74 @@
+service-template:
+  fullnameOverride: "testzeus-traceviewer"
+  replicaCount: 1
+
+  serviceAccount:
+    create: true
+    name: "testzeus-traceviewer-sa"
+    automount: false  # nginx does not call the K8s API
+    annotations:
+      iam.gke.io/gcp-service-account: "gke-runtime-dev3@dev3-testzeus.iam.gserviceaccount.com"
+
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+
+  containers:
+    - name: trace-viewer
+      image:
+        repository: "us-central1-docker.pkg.dev/GCP_PROJECT_ID_DEV3/GAR_DOCKER_REPOSITORY_DEV3"
+        tag: latest
+        pullPolicy: Always
+      ports:
+        - containerPort: 80
+      env:
+        - name: HOST
+          value: "eyJhbGciOiJFUzI1NiIsImtpZCI6IkVsWTBtZyJ9.eyJhdWQiOiJodHRwczovL2hsLmRldi50ZXN0emV1cy5hcHAiLCJleHAiOjQ5MjgzMTM3ODEsImdycGNfYnJvYWRjYXN0X2FkZHJlc3MiOiJoYXRjaGV0LXN0YWNrLWVuZ2luZTo3MDcwIiwiaWF0IjoxNzc0NzEzNzgxLCJpc3MiOiJodHRwczovL2hsLmRldi50ZXN0emV1cy5hcHAiLCJzZXJ2ZXJfdXJsIjoiaHR0cHM6Ly9obC5kZXYudGVzdHpldXMuYXBwIiwic3ViIjoiNzA3ZDA4NTUtODBhYi00ZTFmLWExNTYtZjFjNDU0NmNiZjUyIiwidG9rZW5faWQiOiJkN2VmNzMzNC00MWRmLTQwNTMtOTA3Ny03ZWQ3OWYwNTg4YjAifQ.trW5OLZVZfBQAC_cNiG3AjFLzUzb9bEfTnOQHvPveRn8B--o6_RgWMk2SwFClcoi4k_PloLRyae8hRHBK0OaPg"
+        - name: PORT
+          value: "80"
+        - name: NODE_ENV
+          value: development
+      resources:
+        requests:
+          cpu: "250m"
+          memory: "512Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"
+      readinessProbe:
+        httpGet:
+          path: /
+          port: 80
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /
+          port: 80
+        initialDelaySeconds: 10
+        periodSeconds: 20
+        failureThreshold: 3
+      securityContext: {}
+
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+
+  httpRoute:
+    enabled: true
+    parentRefs:
+      - name: testzeus-gateway
+        namespace: testzeus
+        sectionName: https
+    hostnames:
+      - "tzviewer.dev3.testzeus.app"
+    rules:
+      - matches:
+          - path: /
+            pathType: PathPrefix
+
+  secrets:
+    enabled: false # No secrets for trace-viewer yet
