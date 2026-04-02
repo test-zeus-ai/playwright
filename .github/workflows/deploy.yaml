@@ -1,0 +1,360 @@
+name: Helm - GKE workflow
+
+on:
+  push:
+    branches:
+      - main-prod
+    paths:
+      - .github/workflows/deploy.yaml
+      - helm/**
+      - package.json
+      - package-lock.json
+      - packages/injected/**
+      - packages/playwright-core/**
+      - packages/protocol/**
+      - packages/trace/**
+      - packages/trace-viewer/**
+      - packages/web/**
+      - utils/build/**
+  workflow_dispatch:
+    inputs:
+      deploy_prod:
+        description: "Deploy to production"
+        required: true
+        type: boolean
+        default: false
+      target_env:
+        description: "Deploy environment (dev/dev4/dev5/main-prod)"
+        required: false
+        default: "dev"
+        type: choice
+        options:
+          - dev
+          - dev4
+          - dev5
+          - main-prod
+      branch:
+        description: "Branch to deploy (for dev/dev4/dev5)"
+        required: false
+        default: "main-prod"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  SERVICE_NAME: traceviewer
+  APP_DIR: .
+  DOCKERFILE: packages/trace-viewer/Dockerfile
+  CHART_DIR: helm
+  GAR_LOCATION: ${{ vars.GAR_LOCATION }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+      image_repo: ${{ steps.meta.outputs.image_repo }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && secrets.GCP_WIF_PROVIDER_PROD || secrets.GCP_WIF_PROVIDER_DEV }}
+          service_account: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && secrets.GCP_SA_PROD || secrets.GCP_SA_DEV }}
+          token_format: access_token
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker-container
+
+      - name: Login to GAR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GAR_LOCATION }}-docker.pkg.dev
+          username: oauth2accesstoken
+          password: ${{ steps.auth.outputs.access_token }}
+
+      - name: Build image metadata
+        id: meta
+        run: |
+          TS="$(date -u +%Y%m%d%H%M%S)"
+          IMAGE_TAG="${GITHUB_SHA}-${GITHUB_RUN_ATTEMPT}-$TS"
+          PROJECT_ID="${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GCP_PROJECT_ID_PROD || vars.GCP_PROJECT_ID_DEV }}"
+          GAR_REPO="${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GAR_DOCKER_REPOSITORY_PROD || vars.GAR_DOCKER_REPOSITORY_DEV }}"
+          IMAGE_REPO="${GAR_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${GAR_REPO}/${SERVICE_NAME}"
+          echo "image_tag=${IMAGE_TAG}" >>"${GITHUB_OUTPUT}"
+          echo "image_repo=${IMAGE_REPO}" >>"${GITHUB_OUTPUT}"
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ env.APP_DIR }}
+          file: ${{ env.DOCKERFILE }}
+          push: true
+          tags: ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.image_tag }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  helm4-compat:
+    if: github.ref == 'refs/heads/main-prod' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      TARGET_ENV: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && 'prod' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_env != '' && github.event.inputs.target_env) || 'dev' }}
+      VALUES_FILE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && 'values-prod.yaml' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_env != '' && format('values-{0}.yaml', github.event.inputs.target_env)) || 'values-dev.yaml' }}
+      DEPLOY_NAMESPACE: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && 'testzeus-prod' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target_env != '' && format('testzeus-{0}', github.event.inputs.target_env)) || 'testzeus-dev' }}
+      GKE_CLUSTER: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GKE_PROD_CLUSTER || vars.GKE_DEV_CLUSTER }}
+      GKE_LOCATION: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GKE_PROD_LOCATION || vars.GKE_DEV_LOCATION }}
+      GCP_PROJECT_ID: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GCP_PROJECT_ID_PROD || vars.GCP_PROJECT_ID_DEV }}
+      GAR_HELM_REPOSITORY: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && vars.GAR_HELM_REPOSITORY_PROD || vars.GAR_HELM_REPOSITORY_DEV }}
+      GCP_SA: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && secrets.GCP_SA_PROD || secrets.GCP_SA_DEV }}
+      GCP_WIF_PROVIDER: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod') && secrets.GCP_WIF_PROVIDER_PROD || secrets.GCP_WIF_PROVIDER_DEV }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm 4 (compat check)
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.0.0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_SA }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_LOCATION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Login Helm to GAR OCI registry
+        run: |
+          gcloud auth print-access-token | \
+            helm registry login -u oauth2accesstoken --password-stdin \
+            "${GAR_LOCATION}-docker.pkg.dev"
+
+      - name: Set Helm dependency repository (target env)
+        run: |
+          CHART_REPO="oci://${GAR_LOCATION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_HELM_REPOSITORY}"
+          sed -i "/- name: service-template/,/repository:/ s#repository: \".*\"#repository: \"${CHART_REPO}\"#" "${CHART_DIR}/Chart.yaml"
+
+      - name: Helm dependency update (Helm 4)
+        run: helm dependency update "${CHART_DIR}"
+
+      - name: Helm lint (Helm 4)
+        run: helm lint "${CHART_DIR}" -f "${CHART_DIR}/${VALUES_FILE}"
+
+      - name: Helm template render (Helm 4)
+        run: |
+          helm template "${SERVICE_NAME}-helm4-compat" "${CHART_DIR}" \
+            -f "${CHART_DIR}/${VALUES_FILE}" \
+            --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
+            --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
+            > rendered-helm4.yaml
+
+      - name: Guard rendered manifest fields
+        run: |
+          if grep -nE '^[[:space:]]*(managedFields:|resourceVersion:|uid:|creationTimestamp:)$' rendered-helm4.yaml; then
+            echo "Forbidden metadata fields found in rendered output."
+            exit 1
+          fi
+          if grep -nE '^[[:space:]]*status:[[:space:]]*$' rendered-helm4.yaml; then
+            echo "Forbidden status field found in rendered output."
+            exit 1
+          fi
+
+      - name: Helm upgrade dry-run (Helm 4)
+        run: |
+          helm upgrade "${SERVICE_NAME}-helm4-compat" "${CHART_DIR}" \
+            -f "${CHART_DIR}/${VALUES_FILE}" \
+            --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
+            --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
+            --namespace "${DEPLOY_NAMESPACE}" \
+            --create-namespace \
+            --install \
+            --dry-run=client \
+            --server-side=false \
+            --debug
+
+  deploy-dev:
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main-prod') || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'false' && (github.event.inputs.target_env == 'dev' || github.event.inputs.target_env == 'dev4' || github.event.inputs.target_env == 'dev5'))
+    needs: [build, helm4-compat]
+    runs-on: ubuntu-latest
+    environment: dev
+    env:
+      GKE_CLUSTER: ${{ vars.GKE_DEV_CLUSTER }}
+      GKE_LOCATION: ${{ vars.GKE_DEV_LOCATION }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID_DEV }}
+      VALUES_FILE: ${{ github.event_name == 'workflow_dispatch' && format('values-{0}.yaml', github.event.inputs.target_env) || 'values-dev.yaml' }}
+      DEPLOY_NAMESPACE: ${{ github.event_name == 'workflow_dispatch' && format('testzeus-{0}', github.event.inputs.target_env) || 'testzeus-dev' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.branch || github.ref }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.0.0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER_DEV }}
+          service_account: ${{ secrets.GCP_SA_DEV }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_LOCATION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      - name: Login Helm to GAR OCI registry
+        run: |
+          gcloud auth print-access-token | \
+            helm registry login -u oauth2accesstoken --password-stdin \
+            "${GAR_LOCATION}-docker.pkg.dev"
+
+      - name: Set Helm dependency repository (dev)
+        run: |
+          CHART_REPO="oci://${GAR_LOCATION}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID_DEV }}/${{ vars.GAR_HELM_REPOSITORY_DEV }}"
+          sed -i "/- name: service-template/,/repository:/ s#repository: \".*\"#repository: \"${CHART_REPO}\"#" "${CHART_DIR}/Chart.yaml"
+
+      - name: Helm dependency update
+        run: helm dependency update "${CHART_DIR}"
+
+      - name: Helm deploy to dev
+        run: |
+          helm upgrade "${SERVICE_NAME}" "${CHART_DIR}" \
+            -f "${CHART_DIR}/${VALUES_FILE}" \
+            --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
+            --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
+            --namespace "${DEPLOY_NAMESPACE}" \
+            --create-namespace \
+            --install \
+            --wait \
+            --rollback-on-failure \
+            --server-side=false \
+            --timeout 5m
+
+  deploy-prod:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main-prod' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod')
+    needs: [build, helm4-compat]
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      GKE_CLUSTER: ${{ vars.GKE_PROD_CLUSTER }}
+      GKE_LOCATION: ${{ vars.GKE_PROD_LOCATION }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID_PROD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.0.0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER_PROD }}
+          service_account: ${{ secrets.GCP_SA_PROD }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_LOCATION }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+
+      
+#       - name: Whitelist Runner IP
+#         run: |
+#           RUNNER_IP=$(curl -sf https://api.ipify.org) || { echo "Failed to get runner IP"; exit 1; }
+#           echo "RUNNER_IP=${RUNNER_IP}" >> $GITHUB_ENV
+#           echo "Whitelisting IP: ${RUNNER_IP}"
+
+#           EXISTING_RANGES=$(gcloud container clusters describe ${{ env.GKE_CLUSTER }} \
+#             --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
+#             --format="value(masterAuthorizedNetworksConfig.cidrBlocks[].cidrBlock)" \
+#             | tr '\n' ',' | tr ';' ',' | sed 's/,$//; s/,,*/,/g')
+          
+#           if [[ $EXISTING_RANGES == *"${RUNNER_IP}/32"* ]]; then
+#             echo "IP already whitelisted."
+#           else
+#             NEW_RANGES="${EXISTING_RANGES}${EXISTING_RANGES:+,}${RUNNER_IP}/32"
+#             gcloud container clusters update ${{ env.GKE_CLUSTER }} \
+#               --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
+#               --enable-master-authorized-networks \
+#               --master-authorized-networks "$NEW_RANGES"
+#           fi
+
+      - name: Login Helm to GAR OCI registry
+        run: |
+          gcloud auth print-access-token | \
+            helm registry login -u oauth2accesstoken --password-stdin \
+            "${GAR_LOCATION}-docker.pkg.dev"
+
+      - name: Set Helm dependency repository (prod)
+        run: |
+          CHART_REPO="oci://${GAR_LOCATION}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID_PROD }}/${{ vars.GAR_HELM_REPOSITORY_PROD }}"
+          sed -i "/- name: service-template/,/repository:/ s#repository: \".*\"#repository: \"${CHART_REPO}\"#" "${CHART_DIR}/Chart.yaml"
+
+      - name: Helm dependency update
+        run: helm dependency update "${CHART_DIR}"
+
+      - name: Helm deploy to prod
+        run: |
+          helm upgrade "${SERVICE_NAME}" "${CHART_DIR}" \
+            -f "${CHART_DIR}/values-prod.yaml" \
+            --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
+            --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
+            --namespace "testzeus-prod" \
+            --create-namespace \
+            --install \
+            --wait \
+            --rollback-on-failure \
+            --server-side=false \
+            --timeout 5m
+
+#       - name: Cleanup Runner IP
+#         if: always()
+#         run: |
+#           if [ -n "${RUNNER_IP}" ]; then
+#             echo "Removing Runner IP: ${RUNNER_IP}"
+#             EXISTING_RANGES=$(gcloud container clusters describe ${{ env.GKE_CLUSTER }} \
+#               --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
+#               --format="value(masterAuthorizedNetworksConfig.cidrBlocks[].cidrBlock)" \
+#               | tr '\n' ',' | tr ';' ',' | sed 's/,$//; s/,,*/,/g')
+            
+#             REMAINING_RANGES=$(echo "$EXISTING_RANGES" | sed "s/${RUNNER_IP}\/32//g; s/,,*/,/g; s/^,//; s/,$//")
+            
+#             if [ -n "$REMAINING_RANGES" ]; then
+#               gcloud container clusters update ${{ env.GKE_CLUSTER }} \
+#                 --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
+#                 --enable-master-authorized-networks \
+#                 --master-authorized-networks "$REMAINING_RANGES"
+#             else
+#               gcloud container clusters update ${{ env.GKE_CLUSTER }} \
+#                 --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
+#                 --no-enable-master-authorized-networks
+#             fi
+#           fi
+
+
