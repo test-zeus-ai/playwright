@@ -24,17 +24,17 @@ on:
         type: boolean
         default: false
       target_env:
-        description: "Deploy environment (dev/dev2/dev3/main-prod)"
+        description: "Deploy environment (dev/dev4/dev5/main-prod)"
         required: false
         default: "dev"
         type: choice
         options:
           - dev
-          - dev2
-          - dev3
+          - dev4
+          - dev5
           - main-prod
       branch:
-        description: "Branch to deploy (for dev/dev2/dev3/main-prod)"
+        description: "Branch to deploy (for dev/dev4/dev5)"
         required: false
         default: "main-prod"
 
@@ -192,7 +192,7 @@ jobs:
             --debug
 
   deploy-dev:
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/main-prod') || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'false' && (github.event.inputs.target_env == 'dev' || github.event.inputs.target_env == 'dev2' || github.event.inputs.target_env == 'dev3'))
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/main-prod') || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'false' && (github.event.inputs.target_env == 'dev' || github.event.inputs.target_env == 'dev4' || github.event.inputs.target_env == 'dev5'))
     needs: [build, helm4-compat]
     runs-on: ubuntu-latest
     environment: dev

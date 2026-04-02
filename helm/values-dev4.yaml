@@ -1,0 +1,74 @@
+service-template:
+  fullnameOverride: "testzeus-traceviewer"
+  replicaCount: 1
+
+  serviceAccount:
+    create: true
+    name: "testzeus-traceviewer-sa"
+    automount: false  # nginx does not call the K8s API
+    annotations:
+      iam.gke.io/gcp-service-account: "gke-runtime-dev@dev-testzeus.iam.gserviceaccount.com"
+
+  podSecurityContext:
+    seccompProfile:
+      type: RuntimeDefault
+
+  containers:
+    - name: trace-viewer
+      image:
+        repository: "us-central1-docker.pkg.dev/GCP_PROJECT_ID_DEV/GAR_DOCKER_REPOSITORY_DEV"
+        tag: latest
+        pullPolicy: Always
+      ports:
+        - containerPort: 80
+      env:
+        - name: HOST
+          value: "0.0.0.0"
+        - name: PORT
+          value: "80"
+        - name: NODE_ENV
+          value: development
+      resources:
+        requests:
+          cpu: "250m"
+          memory: "512Mi"
+        limits:
+          cpu: "500m"
+          memory: "512Mi"
+      readinessProbe:
+        httpGet:
+          path: /
+          port: 80
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        failureThreshold: 3
+      livenessProbe:
+        httpGet:
+          path: /
+          port: 80
+        initialDelaySeconds: 10
+        periodSeconds: 20
+        failureThreshold: 3
+      securityContext: {}
+
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 80
+    targetPort: 80
+
+  httpRoute:
+    enabled: true
+    parentRefs:
+      - name: testzeus-gateway
+        namespace: testzeus
+        sectionName: https
+    hostnames:
+      - "tzviewer.dev4.testzeus.app"
+    rules:
+      - matches:
+          - path: /
+            pathType: PathPrefix
+
+  secrets:
+    enabled: false # No secrets for trace-viewer yet
