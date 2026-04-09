@@ -104,6 +104,10 @@ jobs:
           file: ${{ env.DOCKERFILE }}
           push: true
           tags: ${{ steps.meta.outputs.image_repo }}:${{ steps.meta.outputs.image_tag }}
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            GIT_REF=${{ github.ref_name }}
+            BUILD_TIME=${{ steps.meta.outputs.image_tag }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -356,5 +360,4 @@ jobs:
 #                 --no-enable-master-authorized-networks
 #             fi
 #           fi
-
 
