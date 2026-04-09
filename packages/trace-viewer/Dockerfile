@@ -15,11 +15,17 @@ RUN npx vite build -c ./vite.config.ts
 # Runtime image serving static assets with nginx
 FROM nginx:alpine
 
+ARG GIT_SHA
+ARG GIT_REF
+ARG BUILD_TIME
+
 # Copy build output to nginx web root
 COPY --from=build /app/packages/playwright-core/lib/vite/traceViewer /usr/share/nginx/html
 
 # Use hardened nginx config (path is relative to the build context root)
 COPY packages/trace-viewer/nginx.conf /etc/nginx/conf.d/default.conf
+
+RUN printf "commit=%s\nbranch=%s\nbuild_time=%s\n" "$GIT_SHA" "$GIT_REF" "$BUILD_TIME" > /usr/share/nginx/html/commit.txt
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
