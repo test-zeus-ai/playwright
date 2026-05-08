@@ -139,13 +139,6 @@ jobs:
           workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
           service_account: ${{ env.GCP_SA }}
 
-      - name: Get GKE credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: ${{ env.GKE_CLUSTER }}
-          location: ${{ env.GKE_LOCATION }}
-          project_id: ${{ env.GCP_PROJECT_ID }}
-
       - name: Login Helm to GAR OCI registry
         run: |
           gcloud auth print-access-token | \
@@ -181,19 +174,6 @@ jobs:
             echo "Forbidden status field found in rendered output."
             exit 1
           fi
-
-      - name: Helm upgrade dry-run (Helm 4)
-        run: |
-          helm upgrade "${SERVICE_NAME}-helm4-compat" "${CHART_DIR}" \
-            -f "${CHART_DIR}/${VALUES_FILE}" \
-            --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
-            --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
-            --namespace "${DEPLOY_NAMESPACE}" \
-            --create-namespace \
-            --install \
-            --dry-run=client \
-            --server-side=false \
-            --debug
 
   deploy-dev:
     if: (github.event_name == 'push' && github.ref == 'refs/heads/main-prod') || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'false' && (github.event.inputs.target_env == 'dev' || github.event.inputs.target_env == 'dev4' || github.event.inputs.target_env == 'dev5'))
@@ -287,27 +267,26 @@ jobs:
           location: ${{ env.GKE_LOCATION }}
           project_id: ${{ env.GCP_PROJECT_ID }}
 
-      
-#       - name: Whitelist Runner IP
-#         run: |
-#           RUNNER_IP=$(curl -sf https://api.ipify.org) || { echo "Failed to get runner IP"; exit 1; }
-#           echo "RUNNER_IP=${RUNNER_IP}" >> $GITHUB_ENV
-#           echo "Whitelisting IP: ${RUNNER_IP}"
+      - name: Whitelist Runner IP
+        run: |
+          RUNNER_IP=$(curl -sf https://api.ipify.org) || { echo "Failed to get runner IP"; exit 1; }
+          echo "RUNNER_IP=${RUNNER_IP}" >> $GITHUB_ENV
+          echo "Whitelisting IP: ${RUNNER_IP}"
 
-#           EXISTING_RANGES=$(gcloud container clusters describe ${{ env.GKE_CLUSTER }} \
-#             --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
-#             --format="value(masterAuthorizedNetworksConfig.cidrBlocks[].cidrBlock)" \
-#             | tr '\n' ',' | tr ';' ',' | sed 's/,$//; s/,,*/,/g')
-          
-#           if [[ $EXISTING_RANGES == *"${RUNNER_IP}/32"* ]]; then
-#             echo "IP already whitelisted."
-#           else
-#             NEW_RANGES="${EXISTING_RANGES}${EXISTING_RANGES:+,}${RUNNER_IP}/32"
-#             gcloud container clusters update ${{ env.GKE_CLUSTER }} \
-#               --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
-#               --enable-master-authorized-networks \
-#               --master-authorized-networks "$NEW_RANGES"
-#           fi
+          EXISTING_RANGES=$(gcloud container clusters describe ${{ env.GKE_CLUSTER }} \
+            --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
+            --format="value(masterAuthorizedNetworksConfig.cidrBlocks[].cidrBlock)" \
+            | tr '\n' ',' | tr ';' ',' | sed 's/,$//; s/,,*/,/g')
+
+          if [[ $EXISTING_RANGES == *"${RUNNER_IP}/32"* ]]; then
+            echo "IP already whitelisted."
+          else
+            NEW_RANGES="${EXISTING_RANGES}${EXISTING_RANGES:+,}${RUNNER_IP}/32"
+            gcloud container clusters update ${{ env.GKE_CLUSTER }} \
+              --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
+              --enable-master-authorized-networks \
+              --master-authorized-networks "$NEW_RANGES"
+          fi
 
       - name: Login Helm to GAR OCI registry
         run: |
@@ -337,27 +316,26 @@ jobs:
             --server-side=false \
             --timeout 5m
 
-#       - name: Cleanup Runner IP
-#         if: always()
-#         run: |
-#           if [ -n "${RUNNER_IP}" ]; then
-#             echo "Removing Runner IP: ${RUNNER_IP}"
-#             EXISTING_RANGES=$(gcloud container clusters describe ${{ env.GKE_CLUSTER }} \
-#               --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
-#               --format="value(masterAuthorizedNetworksConfig.cidrBlocks[].cidrBlock)" \
-#               | tr '\n' ',' | tr ';' ',' | sed 's/,$//; s/,,*/,/g')
-            
-#             REMAINING_RANGES=$(echo "$EXISTING_RANGES" | sed "s/${RUNNER_IP}\/32//g; s/,,*/,/g; s/^,//; s/,$//")
-            
-#             if [ -n "$REMAINING_RANGES" ]; then
-#               gcloud container clusters update ${{ env.GKE_CLUSTER }} \
-#                 --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
-#                 --enable-master-authorized-networks \
-#                 --master-authorized-networks "$REMAINING_RANGES"
-#             else
-#               gcloud container clusters update ${{ env.GKE_CLUSTER }} \
-#                 --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
-#                 --no-enable-master-authorized-networks
-#             fi
-#           fi
+      - name: Cleanup Runner IP
+        if: always()
+        run: |
+          if [ -n "${RUNNER_IP}" ]; then
+            echo "Removing Runner IP: ${RUNNER_IP}"
+            EXISTING_RANGES=$(gcloud container clusters describe ${{ env.GKE_CLUSTER }} \
+              --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
+              --format="value(masterAuthorizedNetworksConfig.cidrBlocks[].cidrBlock)" \
+              | tr '\n' ',' | tr ';' ',' | sed 's/,$//; s/,,*/,/g')
 
+            REMAINING_RANGES=$(echo "$EXISTING_RANGES" | sed "s/${RUNNER_IP}\/32//g; s/,,*/,/g; s/^,//; s/,$//")
+
+            if [ -n "$REMAINING_RANGES" ]; then
+              gcloud container clusters update ${{ env.GKE_CLUSTER }} \
+                --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
+                --enable-master-authorized-networks \
+                --master-authorized-networks "$REMAINING_RANGES"
+            else
+              gcloud container clusters update ${{ env.GKE_CLUSTER }} \
+                --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
+                --no-enable-master-authorized-networks
+            fi
+          fi
