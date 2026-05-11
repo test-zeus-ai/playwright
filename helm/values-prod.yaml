@@ -65,7 +65,7 @@ service-template:
         namespace: gateway-infra
         sectionName: https
     hostnames:
-      - "tzviewer.prod.testzeus.app"
+      - "tzviewer.stage.testzeus.app"
     rules:
       - matches:
           - path: /
