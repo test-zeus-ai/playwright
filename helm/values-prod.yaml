@@ -61,8 +61,8 @@ service-template:
   httpRoute:
     enabled: true
     parentRefs:
-      - name: main-gateway
-        namespace: gateway-infra
+      - name: testzeus-gateway
+        namespace: testzeus
         sectionName: https
     hostnames:
       - "tzviewer.stage.testzeus.app"
