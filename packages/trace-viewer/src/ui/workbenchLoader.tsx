@@ -188,9 +188,9 @@ export const WorkbenchLoader: React.FunctionComponent<{
   return <div className='vbox workbench-loader' onDragOver={event => { event.preventDefault(); setDragOver(true); }}>
     <div className='hbox header' {...(showFileUploadDropArea ? { inert: true } : {})}>
       <div className='logo'>
-        <img src='playwright-logo.svg' alt='Playwright logo' />
+        <img src='testzeus-logo-light.png' alt='TestZeus logo' />
       </div>
-      <div className='product'>Playwright</div>
+      <div className='product'>TestZeus Trace Viewer</div>
       {model.title && <div className='title'>{model.title}</div>}
       <div className='spacer'></div>
       <DialogToolbarButton icon='settings-gear' title='Settings' dialogDataTestId='settings-toolbar-dialog'>
@@ -208,7 +208,7 @@ export const WorkbenchLoader: React.FunctionComponent<{
     </div>}
     <Dialog open={showProgressDialog} isModal={true} className='progress-dialog'>
       <div className='progress-content'>
-        <div className='title' role='heading' aria-level={1}>Loading Playwright Trace...</div>
+        <div className='title' role='heading' aria-level={1}>Loading TestZeus Trace...</div>
         <div className='progress-wrapper'>
           <div className='inner-progress' style={{ width: progress.total ? (100 * progress.done / progress.total) + '%' : 0 }}></div>
         </div>
@@ -216,7 +216,7 @@ export const WorkbenchLoader: React.FunctionComponent<{
     </Dialog>
     {showFileUploadDropArea && <div className='drop-target'>
       <div className='processing-error' role='alert'>{processingErrorMessage}</div>
-      <div className='title' role='heading' aria-level={1}>Drop Playwright Trace to load</div>
+      <div className='title' role='heading' aria-level={1}>Drop TestZeus Trace to load</div>
       <div>or</div>
       <button onClick={() => {
         const input = document.createElement('input');
@@ -225,7 +225,7 @@ export const WorkbenchLoader: React.FunctionComponent<{
         input.click();
         input.addEventListener('change', e => handleFileInputChange(e));
       }} type='button'>Select file(s)</button>
-      <div style={{ maxWidth: 400 }}>Playwright Trace Viewer is a Progressive Web App, it does not send your trace anywhere,
+      <div style={{ maxWidth: 400 }}>TestZeus Trace Viewer is a Progressive Web App, it does not send your trace anywhere,
         it opens it locally.</div>
     </div>}
     {isServer && !traceURLs.length && <div className='drop-target'>
@@ -234,7 +234,7 @@ export const WorkbenchLoader: React.FunctionComponent<{
     {dragOver && <div className='drop-target'
       onDragLeave={() => { setDragOver(false); }}
       onDrop={event => handleDropEvent(event)}>
-      <div className='title'>Release to analyse the Playwright Trace</div>
+      <div className='title'>Release to analyse the TestZeus Trace</div>
     </div>}
   </div>;
 };

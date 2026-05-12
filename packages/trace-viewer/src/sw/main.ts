@@ -70,8 +70,8 @@ async function loadTrace(traceUrl: string, traceFileName: string | null, client:
     if (error instanceof TraceVersionError)
       throw new Error(`Could not load trace from ${traceFileName || traceUrl}. ${error.message}`);
     if (traceFileName)
-      throw new Error(`Could not load trace from ${traceFileName}. Make sure to upload a valid Playwright trace.`);
-    throw new Error(`Could not load trace from ${traceUrl}. Make sure a valid Playwright Trace is accessible over this url.`);
+      throw new Error(`Could not load trace from ${traceFileName}. Make sure to upload a valid TestZeus trace.`);
+    throw new Error(`Could not load trace from ${traceUrl}. Make sure a valid TestZeus Trace is accessible over this url.`);
   }
   const snapshotServer = new SnapshotServer(traceModel.storage(), sha1 => traceModel.resourceForSha1(sha1));
   loadedTraces.set(traceUrl, { traceModel, snapshotServer });

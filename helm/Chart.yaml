@@ -1,0 +1,10 @@
+apiVersion: v2
+name: trace-viewer
+version: 1.0.0
+description: Playwright trace viewer
+type: application
+
+dependencies:
+  - name: service-template
+    version: "~0.5.0"
+    repository: "oci://us-central1-docker.pkg.dev/prod-testarmy/helm-repository-prod"
