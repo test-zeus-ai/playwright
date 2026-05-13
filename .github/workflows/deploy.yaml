@@ -302,6 +302,9 @@ jobs:
           HELM_RESOURCES_OUTPUT=$(helm get all "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
           echo "${HELM_RESOURCES_OUTPUT}"
           echo "::endgroup::"
+          echo "::group::Deployment describe"
+          kubectl describe deployment "${SERVICE_NAME}" -n "${DEPLOY_NAMESPACE}" || true
+          echo "::endgroup::"
           echo "::group::Release events"
           EVENTS_OUTPUT=$(
             {
