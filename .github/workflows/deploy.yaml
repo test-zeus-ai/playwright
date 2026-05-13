@@ -260,7 +260,8 @@ jobs:
             esac
           fi
           echo "::group::Helm history"
-          helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" || true
+          HELM_HISTORY_OUTPUT=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_HISTORY_OUTPUT}"
           echo "::endgroup::"
 
       - name: Force ExternalSecret sync
@@ -290,21 +291,57 @@ jobs:
         run: |
           echo "Collecting Helm diagnostics for ${SERVICE_NAME}"
           echo "::group::Helm status"
-          helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" || true
+          HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_STATUS_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Helm history"
-          helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" || true
+          HELM_HISTORY_OUTPUT=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_HISTORY_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Helm release resources"
-          helm get all "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" || true
+          HELM_RESOURCES_OUTPUT=$(helm get all "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_RESOURCES_OUTPUT}"
           echo "::endgroup::"
-          echo "::group::Namespace events"
-          kubectl get events -n "${DEPLOY_NAMESPACE}" --sort-by=.lastTimestamp || true
+          echo "::group::Deployment describe"
+          kubectl describe deployment "${SERVICE_NAME}" -n "${DEPLOY_NAMESPACE}" || true
           echo "::endgroup::"
-          echo "::group::Pods"
-          kubectl get pods -n "${DEPLOY_NAMESPACE}" -o wide || true
+          echo "::group::Release events"
+          EVENTS_OUTPUT=$(
+            {
+              kubectl get events -n "${DEPLOY_NAMESPACE}" --sort-by=.lastTimestamp --field-selector involvedObject.kind=Deployment,involvedObject.name="${SERVICE_NAME}" 2>&1 || true
+              kubectl get events -n "${DEPLOY_NAMESPACE}" --sort-by=.lastTimestamp --field-selector involvedObject.kind=ReplicaSet 2>/dev/null | grep -F "${SERVICE_NAME}" || true
+              kubectl get events -n "${DEPLOY_NAMESPACE}" --sort-by=.lastTimestamp --field-selector involvedObject.kind=Pod 2>/dev/null | grep -F "${SERVICE_NAME}" || true
+            } || true
+          )
+          echo "${EVENTS_OUTPUT}"
           echo "::endgroup::"
-
+          echo "::group::Release pods"
+          PODS_OUTPUT=$(kubectl get pods -n "${DEPLOY_NAMESPACE}" -l "app.kubernetes.io/instance=${SERVICE_NAME}" -o wide 2>&1 || true)
+          echo "${PODS_OUTPUT}"
+          echo "::endgroup::"
+          if printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Evicted|Insufficient memory'; then
+            echo "::notice::Likely cause: node memory pressure or pod eviction."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'FailedScheduling|Insufficient cpu|Too many pods'; then
+            echo "::notice::Likely cause: insufficient cluster capacity for the rollout."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'ImagePullBackOff|ErrImagePull'; then
+            echo "::notice::Likely cause: image pull or registry access failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'CreateContainerConfigError|Secret .* not found|configmap .* not found'; then
+            echo "::notice::Likely cause: missing secret or config map."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'FailedMount|MountVolume|volume attach|AttachVolume'; then
+            echo "::notice::Likely cause: storage or volume attach failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Forbidden|RBAC|permission denied'; then
+            echo "::notice::Likely cause: permissions or RBAC failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'AdmissionWebhook|denied by webhook|policy violation'; then
+            echo "::notice::Likely cause: admission webhook or policy rejection."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'x509|TLS|certificate'; then
+            echo "::notice::Likely cause: TLS or certificate validation failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'context deadline exceeded|DeadlineExceeded|timed out'; then
+            echo "::notice::Likely cause: rollout or readiness timeout."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Readiness probe failed|Liveness probe failed|Back-off restarting failed container|CrashLoopBackOff|Error'; then
+            echo "::notice::Likely cause: probe failures, a crashing container, or an application startup error."
+          else
+            echo "::notice::Likely cause: review Helm status, pod events, and pod state above."
+          fi
   deploy-prod:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main-prod' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod')
     needs: [build, helm4-compat]
@@ -401,20 +438,48 @@ jobs:
         run: |
           echo "Collecting Helm diagnostics for ${SERVICE_NAME}"
           echo "::group::Helm status"
-          helm status "${SERVICE_NAME}" --namespace "testzeus-prod" || true
+          HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "testzeus-prod" 2>&1 || true)
+          echo "${HELM_STATUS_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Helm history"
-          helm history "${SERVICE_NAME}" --namespace "testzeus-prod" || true
+          HELM_HISTORY_OUTPUT=$(helm history "${SERVICE_NAME}" --namespace "testzeus-prod" 2>&1 || true)
+          echo "${HELM_HISTORY_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Helm release resources"
-          helm get all "${SERVICE_NAME}" --namespace "testzeus-prod" || true
+          HELM_RESOURCES_OUTPUT=$(helm get all "${SERVICE_NAME}" --namespace "testzeus-prod" 2>&1 || true)
+          echo "${HELM_RESOURCES_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Namespace events"
-          kubectl get events -n "testzeus-prod" --sort-by=.lastTimestamp || true
+          EVENTS_OUTPUT=$(kubectl get events -n "testzeus-prod" --sort-by=.lastTimestamp 2>&1 || true)
+          echo "${EVENTS_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Pods"
-          kubectl get pods -n "testzeus-prod" -o wide || true
+          PODS_OUTPUT=$(kubectl get pods -n "testzeus-prod" -o wide 2>&1 || true)
+          echo "${PODS_OUTPUT}"
           echo "::endgroup::"
+          if printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Evicted|Insufficient memory'; then
+            echo "::notice::Likely cause: node memory pressure or pod eviction."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'FailedScheduling|Insufficient cpu|Too many pods'; then
+            echo "::notice::Likely cause: insufficient cluster capacity for the rollout."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'ImagePullBackOff|ErrImagePull'; then
+            echo "::notice::Likely cause: image pull or registry access failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'CreateContainerConfigError|Secret .* not found|configmap .* not found'; then
+            echo "::notice::Likely cause: missing secret or config map."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'FailedMount|MountVolume|volume attach|AttachVolume'; then
+            echo "::notice::Likely cause: storage or volume attach failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Forbidden|RBAC|permission denied'; then
+            echo "::notice::Likely cause: permissions or RBAC failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'AdmissionWebhook|denied by webhook|policy violation'; then
+            echo "::notice::Likely cause: admission webhook or policy rejection."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'x509|TLS|certificate'; then
+            echo "::notice::Likely cause: TLS or certificate validation failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'context deadline exceeded|DeadlineExceeded|timed out'; then
+            echo "::notice::Likely cause: rollout or readiness timeout."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Readiness probe failed|Liveness probe failed|Back-off restarting failed container|CrashLoopBackOff|Error'; then
+            echo "::notice::Likely cause: probe failures, a crashing container, or an application startup error."
+          else
+            echo "::notice::Likely cause: review Helm status, pod events, and pod state above."
+          fi
 
       - name: Cleanup Runner IP
         if: always()
