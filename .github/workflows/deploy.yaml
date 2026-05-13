@@ -479,7 +479,9 @@ jobs:
             echo "::notice::Likely cause: probe failures, a crashing container, or an application startup error."
           else
             echo "::notice::Likely cause: review Helm status, pod events, and pod state above."
-          fi      - name: Cleanup Runner IP
+          fi
+
+      - name: Cleanup Runner IP
         if: always()
         run: |
           if [ -n "${RUNNER_IP}" ]; then
