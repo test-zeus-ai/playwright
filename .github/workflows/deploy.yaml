@@ -180,6 +180,9 @@ jobs:
     needs: [build, helm4-compat]
     runs-on: ubuntu-latest
     environment: dev
+    concurrency:
+      group: deploy-dev-${{ github.ref_name }}
+      cancel-in-progress: false
     env:
       GKE_CLUSTER: ${{ vars.GKE_DEV_CLUSTER }}
       GKE_LOCATION: ${{ vars.GKE_DEV_LOCATION }}
@@ -223,6 +226,39 @@ jobs:
       - name: Helm dependency update
         run: helm dependency update "${CHART_DIR}"
 
+      - name: Helm pre-deploy state check
+        run: |
+          echo "Checking existing release state for ${SERVICE_NAME} in ${DEPLOY_NAMESPACE}"
+          echo "::group::Helm status"
+          HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_STATUS_OUTPUT}"
+          echo "::endgroup::"
+          RELEASE_STATUS=$(printf '%s
+' "${HELM_STATUS_OUTPUT}" | awk '/^STATUS:/ {print $2; exit}')
+          if [ -n "${RELEASE_STATUS}" ]; then
+            echo "::notice::Release status: ${RELEASE_STATUS}"
+            case "${RELEASE_STATUS}" in
+              pending-install|pending-upgrade|pending-rollback)
+                echo "::error::Helm release is stuck in ${RELEASE_STATUS}. This usually means another install, upgrade, or rollback is still in progress."
+                {
+                  echo "### Deployment summary"
+                  echo ""
+                  echo "| Field | Value |"
+                  echo "| --- | --- |"
+                  echo "| Environment | dev |"
+                  echo "| Release | ${SERVICE_NAME} |"
+                  echo "| Namespace | ${DEPLOY_NAMESPACE} |"
+                  echo "| Result | blocked before deploy |"
+                  echo "| Likely cause | Helm release is stuck in ${RELEASE_STATUS}. Another install, upgrade, or rollback is still in progress. |"
+                } >> "${GITHUB_STEP_SUMMARY}"
+                exit 1
+                ;;
+            esac
+          fi
+          echo "::group::Helm history"
+          helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" || true
+          echo "::endgroup::"
+
       - name: Helm deploy to dev
         run: |
           helm upgrade "${SERVICE_NAME}" "${CHART_DIR}" \
@@ -236,6 +272,26 @@ jobs:
             --rollback-on-failure \
             --server-side=false \
             --timeout 5m
+
+      - name: Collect Helm diagnostics on failure
+        if: failure()
+        run: |
+          echo "Collecting Helm diagnostics for ${SERVICE_NAME}"
+          echo "::group::Helm status"
+          helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" || true
+          echo "::endgroup::"
+          echo "::group::Helm history"
+          helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" || true
+          echo "::endgroup::"
+          echo "::group::Helm release resources"
+          helm get all "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" || true
+          echo "::endgroup::"
+          echo "::group::Namespace events"
+          kubectl get events -n "${DEPLOY_NAMESPACE}" --sort-by=.lastTimestamp || true
+          echo "::endgroup::"
+          echo "::group::Pods"
+          kubectl get pods -n "${DEPLOY_NAMESPACE}" -o wide || true
+          echo "::endgroup::"
 
   deploy-prod:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main-prod' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod')
@@ -317,6 +373,26 @@ jobs:
             --rollback-on-failure \
             --server-side=false \
             --timeout 5m
+
+      - name: Collect Helm diagnostics on failure
+        if: failure()
+        run: |
+          echo "Collecting Helm diagnostics for ${SERVICE_NAME}"
+          echo "::group::Helm status"
+          helm status "${SERVICE_NAME}" --namespace "testzeus-prod" || true
+          echo "::endgroup::"
+          echo "::group::Helm history"
+          helm history "${SERVICE_NAME}" --namespace "testzeus-prod" || true
+          echo "::endgroup::"
+          echo "::group::Helm release resources"
+          helm get all "${SERVICE_NAME}" --namespace "testzeus-prod" || true
+          echo "::endgroup::"
+          echo "::group::Namespace events"
+          kubectl get events -n "testzeus-prod" --sort-by=.lastTimestamp || true
+          echo "::endgroup::"
+          echo "::group::Pods"
+          kubectl get pods -n "testzeus-prod" -o wide || true
+          echo "::endgroup::"
 
       - name: Cleanup Runner IP
         if: always()
