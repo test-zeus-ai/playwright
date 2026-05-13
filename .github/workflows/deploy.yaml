@@ -186,7 +186,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: dev
     concurrency:
-      group: deploy-dev-${{ github.ref_name }}
+      group: deploy-${{ github.event_name == 'workflow_dispatch' && (inputs.target_env == 'dev' && 'testzeus-dev' || format('testzeus-{0}', inputs.target_env)) || 'testzeus-dev' }}
       cancel-in-progress: false
     env:
       GKE_CLUSTER: ${{ vars.GKE_DEV_CLUSTER }}
