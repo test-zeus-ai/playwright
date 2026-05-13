@@ -238,8 +238,7 @@ jobs:
           HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
           echo "${HELM_STATUS_OUTPUT}"
           echo "::endgroup::"
-          RELEASE_STATUS=$(printf '%s
-' "${HELM_STATUS_OUTPUT}" | awk '/^STATUS:/ {print $2; exit}')
+          RELEASE_STATUS=$(printf '%s\n' "${HELM_STATUS_OUTPUT}" | awk '/^STATUS:/ {print $2; exit}')
           if [ -n "${RELEASE_STATUS}" ]; then
             echo "::notice::Release status: ${RELEASE_STATUS}"
             case "${RELEASE_STATUS}" in
@@ -315,6 +314,8 @@ jobs:
       GKE_CLUSTER: ${{ vars.GKE_PROD_CLUSTER }}
       GKE_LOCATION: ${{ vars.GKE_PROD_LOCATION }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID_PROD }}
+      # Keep this aligned with the prod NAT IP from Terraform if it changes.
+      BASELINE_RANGES: "10.20.0.0/16,10.100.0.0/24,34.121.117.161/32"
     steps:
       - uses: actions/checkout@v4
 
@@ -347,10 +348,10 @@ jobs:
             --format="value(masterAuthorizedNetworksConfig.cidrBlocks[].cidrBlock)" \
             | tr '\n' ',' | tr ';' ',' | sed 's/,$//; s/,,*/,/g')
 
-          if [[ $EXISTING_RANGES == *"${RUNNER_IP}/32"* ]]; then
+          if [[ ",${EXISTING_RANGES}," == *",${RUNNER_IP}/32,"* ]]; then
             echo "IP already whitelisted."
           else
-            NEW_RANGES="${EXISTING_RANGES}${EXISTING_RANGES:+,}${RUNNER_IP}/32"
+            NEW_RANGES="${BASELINE_RANGES},${RUNNER_IP}/32"
             gcloud container clusters update ${{ env.GKE_CLUSTER }} \
               --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
               --enable-authorized-networks-on-private-endpoint \
