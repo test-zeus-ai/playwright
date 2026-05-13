@@ -238,8 +238,7 @@ jobs:
           HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
           echo "${HELM_STATUS_OUTPUT}"
           echo "::endgroup::"
-          RELEASE_STATUS=$(printf '%s
-' "${HELM_STATUS_OUTPUT}" | awk '/^STATUS:/ {print $2; exit}')
+          RELEASE_STATUS=$(printf '%s\n' "${HELM_STATUS_OUTPUT}" | awk '/^STATUS:/ {print $2; exit}')
           if [ -n "${RELEASE_STATUS}" ]; then
             echo "::notice::Release status: ${RELEASE_STATUS}"
             case "${RELEASE_STATUS}" in
