@@ -33,6 +33,11 @@ on:
           - dev4
           - dev5
           - main-prod
+      refresh_secrets:
+        description: "Force refresh ExternalSecrets before deploy, use only after secret changes or rotation"
+        required: false
+        default: false
+        type: boolean
       branch:
         description: "Branch to deploy (for dev/dev4/dev5)"
         required: false
@@ -259,6 +264,14 @@ jobs:
           helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" || true
           echo "::endgroup::"
 
+      - name: Force ExternalSecret sync
+        if: github.event_name == 'workflow_dispatch' && inputs.refresh_secrets
+        run: |
+          SYNC_TOKEN=$(date +%s)
+          echo "Forcing ExternalSecret sync in ${DEPLOY_NAMESPACE} (token=${SYNC_TOKEN})"
+          for EXT_SECRET in $(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name 2>/dev/null || true); do
+            kubectl annotate "${EXT_SECRET}" -n "${DEPLOY_NAMESPACE}" external-secrets.io/force-sync="${SYNC_TOKEN}" --overwrite
+          done
       - name: Helm deploy to dev
         run: |
           helm upgrade "${SERVICE_NAME}" "${CHART_DIR}" \
@@ -360,6 +373,14 @@ jobs:
       - name: Helm dependency update
         run: helm dependency update "${CHART_DIR}"
 
+      - name: Force ExternalSecret sync
+        if: github.event_name == 'workflow_dispatch' && inputs.refresh_secrets
+        run: |
+          SYNC_TOKEN=$(date +%s)
+          echo "Forcing ExternalSecret sync in ${DEPLOY_NAMESPACE} (token=${SYNC_TOKEN})"
+          for EXT_SECRET in $(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name 2>/dev/null || true); do
+            kubectl annotate "${EXT_SECRET}" -n "${DEPLOY_NAMESPACE}" external-secrets.io/force-sync="${SYNC_TOKEN}" --overwrite
+          done
       - name: Helm deploy to prod
         run: |
           helm upgrade "${SERVICE_NAME}" "${CHART_DIR}" \
