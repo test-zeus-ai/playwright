@@ -264,6 +264,28 @@ jobs:
           echo "${HELM_HISTORY_OUTPUT}"
           echo "::endgroup::"
 
+      - name: Reset stuck Helm release (if pending)
+        run: |
+          STATUS=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" --output json 2>/dev/null             | jq -r '.info.status' || echo "not-found")
+          echo "Current release status: ${STATUS}"
+          if [[ "${STATUS}" == "pending-upgrade" || "${STATUS}" == "pending-install" || "${STATUS}" == "pending-rollback" ]]; then
+            echo "Release is stuck in '${STATUS}' — attempting rollback to last good revision..."
+            LAST_GOOD=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" --output json               | jq '[.[] | select(.status == "deployed")] | last | .revision')
+            if [[ -n "${LAST_GOOD}" && "${LAST_GOOD}" != "null" ]]; then
+              # No --wait: avoids re-hitting the ScaledObject readiness timeout on the old chart.
+              # The upgrade step immediately following will be the source of truth for success.
+              helm rollback "${SERVICE_NAME}" "${LAST_GOOD}" --namespace "${DEPLOY_NAMESPACE}" --timeout 5m
+              echo "Rolled back to revision ${LAST_GOOD}"
+            else
+              # No deployed revision exists (first-ever install got stuck).
+              # Uninstalling automatically would delete all cluster resources and cause downtime.
+              # Require manual intervention to avoid accidental teardown.
+              echo "::error::Release '${SERVICE_NAME}' is stuck in '${STATUS}' with no clean revision to roll back to."
+              echo "::error::Manual fix required: kubectl delete secret -n ${DEPLOY_NAMESPACE} $(kubectl get secrets -n ${DEPLOY_NAMESPACE} -l owner=helm,name=${SERVICE_NAME} -o name)"
+              exit 1
+            fi
+          fi
+
       - name: Force ExternalSecret sync
         if: github.event_name == 'workflow_dispatch' && inputs.refresh_secrets
         run: |
