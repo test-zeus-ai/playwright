@@ -255,7 +255,7 @@ jobs:
                   echo "| Result | blocked before deploy |"
                   echo "| Likely cause | Helm release is stuck in ${RELEASE_STATUS}. Another install, upgrade, or rollback is still in progress. |"
                 } >> "${GITHUB_STEP_SUMMARY}"
-                exit 1
+                echo "::warning::Continuing so the recovery step can attempt rollback."
                 ;;
             esac
           fi
