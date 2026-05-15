@@ -291,7 +291,12 @@ jobs:
         run: |
           SYNC_TOKEN=$(date +%s)
           echo "Forcing ExternalSecret sync in ${DEPLOY_NAMESPACE} (token=${SYNC_TOKEN})"
-          for EXT_SECRET in $(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name 2>/dev/null || true); do
+          mapfile -t EXT_SECRETS < <(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name)
+          if [[ ${#EXT_SECRETS[@]} -eq 0 ]]; then
+            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; skipping force sync."
+            exit 0
+          fi
+          for EXT_SECRET in "${EXT_SECRETS[@]}"; do
             kubectl annotate "${EXT_SECRET}" -n "${DEPLOY_NAMESPACE}" external-secrets.io/force-sync="${SYNC_TOKEN}" --overwrite
           done
       - name: Helm deploy to dev
@@ -373,6 +378,7 @@ jobs:
       GKE_CLUSTER: ${{ vars.GKE_PROD_CLUSTER }}
       GKE_LOCATION: ${{ vars.GKE_PROD_LOCATION }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID_PROD }}
+      DEPLOY_NAMESPACE: testzeus-prod
       # Keep this aligned with the prod NAT IP from Terraform if it changes.
       BASELINE_RANGES: "10.20.0.0/16,10.100.0.0/24,34.121.117.161/32"
     steps:
@@ -438,7 +444,12 @@ jobs:
         run: |
           SYNC_TOKEN=$(date +%s)
           echo "Forcing ExternalSecret sync in ${DEPLOY_NAMESPACE} (token=${SYNC_TOKEN})"
-          for EXT_SECRET in $(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name 2>/dev/null || true); do
+          mapfile -t EXT_SECRETS < <(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name)
+          if [[ ${#EXT_SECRETS[@]} -eq 0 ]]; then
+            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; skipping force sync."
+            exit 0
+          fi
+          for EXT_SECRET in "${EXT_SECRETS[@]}"; do
             kubectl annotate "${EXT_SECRET}" -n "${DEPLOY_NAMESPACE}" external-secrets.io/force-sync="${SYNC_TOKEN}" --overwrite
           done
       - name: Helm deploy to prod
