@@ -7,7 +7,7 @@ service-template:
     name: "testzeus-traceviewer-sa"
     automount: false  # nginx does not call the K8s API
     annotations:
-      iam.gke.io/gcp-service-account: "gke-runtime-prod@prod-testarmy.iam.gserviceaccount.com"
+      iam.gke.io/gcp-service-account: "gke-runtime-prod-prod-testarmy@prod-testarmy.iam.gserviceaccount.com"
 
   podSecurityContext:
     seccompProfile:
