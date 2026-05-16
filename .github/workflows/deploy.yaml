@@ -291,12 +291,16 @@ jobs:
         run: |
           SYNC_TOKEN=$(date +%s)
           echo "Forcing ExternalSecret sync in ${DEPLOY_NAMESPACE} (token=${SYNC_TOKEN})"
-          mapfile -t EXT_SECRETS < <(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name)
-          if [[ ${#EXT_SECRETS[@]} -eq 0 ]]; then
-            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; skipping force sync."
-            exit 0
+          if ! EXT_SECRETS=$(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name); then
+            echo "::error::Unable to list ExternalSecrets in ${DEPLOY_NAMESPACE}; aborting forced secret refresh."
+            exit 1
           fi
-          for EXT_SECRET in "${EXT_SECRETS[@]}"; do
+
+          if [[ -z "${EXT_SECRETS}" ]]; then
+            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; nothing to refresh."
+          fi
+
+          for EXT_SECRET in ${EXT_SECRETS}; do
             kubectl annotate "${EXT_SECRET}" -n "${DEPLOY_NAMESPACE}" external-secrets.io/force-sync="${SYNC_TOKEN}" --overwrite
           done
       - name: Helm deploy to dev
@@ -444,12 +448,16 @@ jobs:
         run: |
           SYNC_TOKEN=$(date +%s)
           echo "Forcing ExternalSecret sync in ${DEPLOY_NAMESPACE} (token=${SYNC_TOKEN})"
-          mapfile -t EXT_SECRETS < <(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name)
-          if [[ ${#EXT_SECRETS[@]} -eq 0 ]]; then
-            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; skipping force sync."
-            exit 0
+          if ! EXT_SECRETS=$(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name); then
+            echo "::error::Unable to list ExternalSecrets in ${DEPLOY_NAMESPACE}; aborting forced secret refresh."
+            exit 1
           fi
-          for EXT_SECRET in "${EXT_SECRETS[@]}"; do
+
+          if [[ -z "${EXT_SECRETS}" ]]; then
+            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; nothing to refresh."
+          fi
+
+          for EXT_SECRET in ${EXT_SECRETS}; do
             kubectl annotate "${EXT_SECRET}" -n "${DEPLOY_NAMESPACE}" external-secrets.io/force-sync="${SYNC_TOKEN}" --overwrite
           done
       - name: Helm deploy to prod
