@@ -255,7 +255,7 @@ jobs:
                   echo "| Result | blocked before deploy |"
                   echo "| Likely cause | Helm release is stuck in ${RELEASE_STATUS}. Another install, upgrade, or rollback is still in progress. |"
                 } >> "${GITHUB_STEP_SUMMARY}"
-                exit 1
+                echo "::warning::Continuing so the recovery step can attempt rollback."
                 ;;
             esac
           fi
@@ -457,7 +457,7 @@ jobs:
             LAST_GOOD=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" --output json \
               | jq '[.[] | select(.status == "deployed")] | last | .revision')
             if [[ -n "${LAST_GOOD}" && "${LAST_GOOD}" != "null" ]]; then
-              # No --wait: avoids re-hitting readiness timeouts on the old chart.
+              # No --wait: avoids re-hitting the ScaledObject readiness timeout on the old chart.
               # The upgrade step immediately following will be the source of truth for success.
               helm rollback "${SERVICE_NAME}" "${LAST_GOOD}" --namespace "${DEPLOY_NAMESPACE}" --timeout 5m
               echo "Rolled back to revision ${LAST_GOOD}"
