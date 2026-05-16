@@ -443,6 +443,34 @@ jobs:
       - name: Helm dependency update
         run: helm dependency update "${CHART_DIR}"
 
+      - name: Reset stuck Helm release (if pending)
+        run: |
+          if STATUS_JSON=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" --output json 2>/dev/null); then
+            STATUS=$(printf '%s' "${STATUS_JSON}" | jq -r '.info.status // "not-found"')
+          else
+            STATUS="not-found"
+          fi
+
+          echo "Current release status: ${STATUS}"
+          if [[ "${STATUS}" == "pending-upgrade" || "${STATUS}" == "pending-install" || "${STATUS}" == "pending-rollback" ]]; then
+            echo "Release is stuck in '${STATUS}' — attempting rollback to last good revision..."
+            LAST_GOOD=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" --output json \
+              | jq '[.[] | select(.status == "deployed")] | last | .revision')
+            if [[ -n "${LAST_GOOD}" && "${LAST_GOOD}" != "null" ]]; then
+              # No --wait: avoids re-hitting readiness timeouts on the old chart.
+              # The upgrade step immediately following will be the source of truth for success.
+              helm rollback "${SERVICE_NAME}" "${LAST_GOOD}" --namespace "${DEPLOY_NAMESPACE}" --timeout 5m
+              echo "Rolled back to revision ${LAST_GOOD}"
+            else
+              # No deployed revision exists (first-ever install got stuck).
+              # Uninstalling automatically would delete all cluster resources and cause downtime.
+              # Require manual intervention to avoid accidental teardown.
+              echo "::error::Release '${SERVICE_NAME}' is stuck in '${STATUS}' with no clean revision to roll back to."
+              echo "::error::Manual fix required: kubectl delete secret -n ${DEPLOY_NAMESPACE} $(kubectl get secrets -n ${DEPLOY_NAMESPACE} -l owner=helm,name=${SERVICE_NAME} -o name)"
+              exit 1
+            fi
+          fi
+
       - name: Force ExternalSecret sync
         if: github.event_name == 'workflow_dispatch' && inputs.refresh_secrets
         run: |
@@ -466,7 +494,7 @@ jobs:
             -f "${CHART_DIR}/values-prod.yaml" \
             --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
             --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
-            --namespace "testzeus-prod" \
+            --namespace "${DEPLOY_NAMESPACE}" \
             --create-namespace \
             --install \
             --wait \
@@ -479,23 +507,23 @@ jobs:
         run: |
           echo "Collecting Helm diagnostics for ${SERVICE_NAME}"
           echo "::group::Helm status"
-          HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "testzeus-prod" 2>&1 || true)
+          HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
           echo "${HELM_STATUS_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Helm history"
-          HELM_HISTORY_OUTPUT=$(helm history "${SERVICE_NAME}" --namespace "testzeus-prod" 2>&1 || true)
+          HELM_HISTORY_OUTPUT=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
           echo "${HELM_HISTORY_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Helm release resources"
-          HELM_RESOURCES_OUTPUT=$(helm get all "${SERVICE_NAME}" --namespace "testzeus-prod" 2>&1 || true)
+          HELM_RESOURCES_OUTPUT=$(helm get all "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
           echo "${HELM_RESOURCES_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Namespace events"
-          EVENTS_OUTPUT=$(kubectl get events -n "testzeus-prod" --sort-by=.lastTimestamp 2>&1 || true)
+          EVENTS_OUTPUT=$(kubectl get events -n "${DEPLOY_NAMESPACE}" --sort-by=.lastTimestamp 2>&1 || true)
           echo "${EVENTS_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Pods"
-          PODS_OUTPUT=$(kubectl get pods -n "testzeus-prod" -o wide 2>&1 || true)
+          PODS_OUTPUT=$(kubectl get pods -n "${DEPLOY_NAMESPACE}" -o wide 2>&1 || true)
           echo "${PODS_OUTPUT}"
           echo "::endgroup::"
           if printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Evicted|Insufficient memory'; then
