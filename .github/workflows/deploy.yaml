@@ -33,6 +33,11 @@ on:
           - dev4
           - dev5
           - main-prod
+      refresh_secrets:
+        description: "Force refresh ExternalSecrets before deploy, use only after secret changes or rotation"
+        required: false
+        default: false
+        type: boolean
       branch:
         description: "Branch to deploy (for dev/dev4/dev5)"
         required: false
@@ -180,6 +185,9 @@ jobs:
     needs: [build, helm4-compat]
     runs-on: ubuntu-latest
     environment: dev
+    concurrency:
+      group: deploy-${{ github.event_name == 'workflow_dispatch' && (inputs.target_env == 'dev' && 'testzeus-dev' || format('testzeus-{0}', inputs.target_env)) || 'testzeus-dev' }}
+      cancel-in-progress: false
     env:
       GKE_CLUSTER: ${{ vars.GKE_DEV_CLUSTER }}
       GKE_LOCATION: ${{ vars.GKE_DEV_LOCATION }}
@@ -223,6 +231,78 @@ jobs:
       - name: Helm dependency update
         run: helm dependency update "${CHART_DIR}"
 
+      - name: Helm pre-deploy state check
+        run: |
+          echo "Checking existing release state for ${SERVICE_NAME} in ${DEPLOY_NAMESPACE}"
+          echo "::group::Helm status"
+          HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_STATUS_OUTPUT}"
+          echo "::endgroup::"
+          RELEASE_STATUS=$(printf '%s\n' "${HELM_STATUS_OUTPUT}" | awk '/^STATUS:/ {print $2; exit}')
+          if [ -n "${RELEASE_STATUS}" ]; then
+            echo "::notice::Release status: ${RELEASE_STATUS}"
+            case "${RELEASE_STATUS}" in
+              pending-install|pending-upgrade|pending-rollback)
+                echo "::error::Helm release is stuck in ${RELEASE_STATUS}. This usually means another install, upgrade, or rollback is still in progress."
+                {
+                  echo "### Deployment summary"
+                  echo ""
+                  echo "| Field | Value |"
+                  echo "| --- | --- |"
+                  echo "| Environment | dev |"
+                  echo "| Release | ${SERVICE_NAME} |"
+                  echo "| Namespace | ${DEPLOY_NAMESPACE} |"
+                  echo "| Result | blocked before deploy |"
+                  echo "| Likely cause | Helm release is stuck in ${RELEASE_STATUS}. Another install, upgrade, or rollback is still in progress. |"
+                } >> "${GITHUB_STEP_SUMMARY}"
+                echo "::warning::Continuing so the recovery step can attempt rollback."
+                ;;
+            esac
+          fi
+          echo "::group::Helm history"
+          HELM_HISTORY_OUTPUT=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_HISTORY_OUTPUT}"
+          echo "::endgroup::"
+
+      - name: Reset stuck Helm release (if pending)
+        run: |
+          STATUS=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" --output json 2>/dev/null             | jq -r '.info.status' || echo "not-found")
+          echo "Current release status: ${STATUS}"
+          if [[ "${STATUS}" == "pending-upgrade" || "${STATUS}" == "pending-install" || "${STATUS}" == "pending-rollback" ]]; then
+            echo "Release is stuck in '${STATUS}' — attempting rollback to last good revision..."
+            LAST_GOOD=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" --output json               | jq '[.[] | select(.status == "deployed")] | last | .revision')
+            if [[ -n "${LAST_GOOD}" && "${LAST_GOOD}" != "null" ]]; then
+              # No --wait: avoids re-hitting the ScaledObject readiness timeout on the old chart.
+              # The upgrade step immediately following will be the source of truth for success.
+              helm rollback "${SERVICE_NAME}" "${LAST_GOOD}" --namespace "${DEPLOY_NAMESPACE}" --timeout 5m
+              echo "Rolled back to revision ${LAST_GOOD}"
+            else
+              # No deployed revision exists (first-ever install got stuck).
+              # Uninstalling automatically would delete all cluster resources and cause downtime.
+              # Require manual intervention to avoid accidental teardown.
+              echo "::error::Release '${SERVICE_NAME}' is stuck in '${STATUS}' with no clean revision to roll back to."
+              echo "::error::Manual fix required: kubectl delete secret -n ${DEPLOY_NAMESPACE} $(kubectl get secrets -n ${DEPLOY_NAMESPACE} -l owner=helm,name=${SERVICE_NAME} -o name)"
+              exit 1
+            fi
+          fi
+
+      - name: Force ExternalSecret sync
+        if: github.event_name == 'workflow_dispatch' && inputs.refresh_secrets
+        run: |
+          SYNC_TOKEN=$(date +%s)
+          echo "Forcing ExternalSecret sync in ${DEPLOY_NAMESPACE} (token=${SYNC_TOKEN})"
+          if ! EXT_SECRETS=$(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name); then
+            echo "::error::Unable to list ExternalSecrets in ${DEPLOY_NAMESPACE}; aborting forced secret refresh."
+            exit 1
+          fi
+
+          if [[ -z "${EXT_SECRETS}" ]]; then
+            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; nothing to refresh."
+          fi
+
+          for EXT_SECRET in ${EXT_SECRETS}; do
+            kubectl annotate "${EXT_SECRET}" -n "${DEPLOY_NAMESPACE}" external-secrets.io/force-sync="${SYNC_TOKEN}" --overwrite
+          done
       - name: Helm deploy to dev
         run: |
           helm upgrade "${SERVICE_NAME}" "${CHART_DIR}" \
@@ -237,6 +317,62 @@ jobs:
             --server-side=false \
             --timeout 5m
 
+      - name: Collect Helm diagnostics on failure
+        if: failure()
+        run: |
+          echo "Collecting Helm diagnostics for ${SERVICE_NAME}"
+          echo "::group::Helm status"
+          HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_STATUS_OUTPUT}"
+          echo "::endgroup::"
+          echo "::group::Helm history"
+          HELM_HISTORY_OUTPUT=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_HISTORY_OUTPUT}"
+          echo "::endgroup::"
+          echo "::group::Helm release resources"
+          HELM_RESOURCES_OUTPUT=$(helm get all "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_RESOURCES_OUTPUT}"
+          echo "::endgroup::"
+          echo "::group::Deployment describe"
+          kubectl describe deployment "${SERVICE_NAME}" -n "${DEPLOY_NAMESPACE}" || true
+          echo "::endgroup::"
+          echo "::group::Release events"
+          EVENTS_OUTPUT=$(
+            {
+              kubectl get events -n "${DEPLOY_NAMESPACE}" --sort-by=.lastTimestamp --field-selector involvedObject.kind=Deployment,involvedObject.name="${SERVICE_NAME}" 2>&1 || true
+              kubectl get events -n "${DEPLOY_NAMESPACE}" --sort-by=.lastTimestamp --field-selector involvedObject.kind=ReplicaSet 2>/dev/null | grep -F "${SERVICE_NAME}" || true
+              kubectl get events -n "${DEPLOY_NAMESPACE}" --sort-by=.lastTimestamp --field-selector involvedObject.kind=Pod 2>/dev/null | grep -F "${SERVICE_NAME}" || true
+            } || true
+          )
+          echo "${EVENTS_OUTPUT}"
+          echo "::endgroup::"
+          echo "::group::Release pods"
+          PODS_OUTPUT=$(kubectl get pods -n "${DEPLOY_NAMESPACE}" -l "app.kubernetes.io/instance=${SERVICE_NAME}" -o wide 2>&1 || true)
+          echo "${PODS_OUTPUT}"
+          echo "::endgroup::"
+          if printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Evicted|Insufficient memory'; then
+            echo "::notice::Likely cause: node memory pressure or pod eviction."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'FailedScheduling|Insufficient cpu|Too many pods'; then
+            echo "::notice::Likely cause: insufficient cluster capacity for the rollout."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'ImagePullBackOff|ErrImagePull'; then
+            echo "::notice::Likely cause: image pull or registry access failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'CreateContainerConfigError|Secret .* not found|configmap .* not found'; then
+            echo "::notice::Likely cause: missing secret or config map."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'FailedMount|MountVolume|volume attach|AttachVolume'; then
+            echo "::notice::Likely cause: storage or volume attach failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Forbidden|RBAC|permission denied'; then
+            echo "::notice::Likely cause: permissions or RBAC failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'AdmissionWebhook|denied by webhook|policy violation'; then
+            echo "::notice::Likely cause: admission webhook or policy rejection."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'x509|TLS|certificate'; then
+            echo "::notice::Likely cause: TLS or certificate validation failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'context deadline exceeded|DeadlineExceeded|timed out'; then
+            echo "::notice::Likely cause: rollout or readiness timeout."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Readiness probe failed|Liveness probe failed|Back-off restarting failed container|CrashLoopBackOff|Error'; then
+            echo "::notice::Likely cause: probe failures, a crashing container, or an application startup error."
+          else
+            echo "::notice::Likely cause: review Helm status, pod events, and pod state above."
+          fi
   deploy-prod:
     if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main-prod' && (github.event.inputs.deploy_prod == 'true' || github.event.inputs.target_env == 'main-prod')
     needs: [build, helm4-compat]
@@ -246,6 +382,9 @@ jobs:
       GKE_CLUSTER: ${{ vars.GKE_PROD_CLUSTER }}
       GKE_LOCATION: ${{ vars.GKE_PROD_LOCATION }}
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID_PROD }}
+      DEPLOY_NAMESPACE: testzeus-prod
+      # Keep this aligned with the prod NAT IP from Terraform if it changes.
+      BASELINE_RANGES: "10.20.0.0/16,10.100.0.0/24,34.121.117.161/32"
     steps:
       - uses: actions/checkout@v4
 
@@ -278,10 +417,10 @@ jobs:
             --format="value(masterAuthorizedNetworksConfig.cidrBlocks[].cidrBlock)" \
             | tr '\n' ',' | tr ';' ',' | sed 's/,$//; s/,,*/,/g')
 
-          if [[ $EXISTING_RANGES == *"${RUNNER_IP}/32"* ]]; then
+          if [[ ",${EXISTING_RANGES}," == *",${RUNNER_IP}/32,"* ]]; then
             echo "IP already whitelisted."
           else
-            NEW_RANGES="${EXISTING_RANGES}${EXISTING_RANGES:+,}${RUNNER_IP}/32"
+            NEW_RANGES="${BASELINE_RANGES},${RUNNER_IP}/32"
             gcloud container clusters update ${{ env.GKE_CLUSTER }} \
               --location ${{ env.GKE_LOCATION }} --project ${{ env.GCP_PROJECT_ID }} \
               --enable-authorized-networks-on-private-endpoint \
@@ -304,19 +443,112 @@ jobs:
       - name: Helm dependency update
         run: helm dependency update "${CHART_DIR}"
 
+      - name: Reset stuck Helm release (if pending)
+        run: |
+          if STATUS_JSON=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" --output json 2>/dev/null); then
+            STATUS=$(printf '%s' "${STATUS_JSON}" | jq -r '.info.status // "not-found"')
+          else
+            STATUS="not-found"
+          fi
+
+          echo "Current release status: ${STATUS}"
+          if [[ "${STATUS}" == "pending-upgrade" || "${STATUS}" == "pending-install" || "${STATUS}" == "pending-rollback" ]]; then
+            echo "Release is stuck in '${STATUS}' — attempting rollback to last good revision..."
+            LAST_GOOD=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" --output json \
+              | jq '[.[] | select(.status == "deployed")] | last | .revision')
+            if [[ -n "${LAST_GOOD}" && "${LAST_GOOD}" != "null" ]]; then
+              # No --wait: avoids re-hitting the ScaledObject readiness timeout on the old chart.
+              # The upgrade step immediately following will be the source of truth for success.
+              helm rollback "${SERVICE_NAME}" "${LAST_GOOD}" --namespace "${DEPLOY_NAMESPACE}" --timeout 5m
+              echo "Rolled back to revision ${LAST_GOOD}"
+            else
+              # No deployed revision exists (first-ever install got stuck).
+              # Uninstalling automatically would delete all cluster resources and cause downtime.
+              # Require manual intervention to avoid accidental teardown.
+              echo "::error::Release '${SERVICE_NAME}' is stuck in '${STATUS}' with no clean revision to roll back to."
+              echo "::error::Manual fix required: kubectl delete secret -n ${DEPLOY_NAMESPACE} $(kubectl get secrets -n ${DEPLOY_NAMESPACE} -l owner=helm,name=${SERVICE_NAME} -o name)"
+              exit 1
+            fi
+          fi
+
+      - name: Force ExternalSecret sync
+        if: github.event_name == 'workflow_dispatch' && inputs.refresh_secrets
+        run: |
+          SYNC_TOKEN=$(date +%s)
+          echo "Forcing ExternalSecret sync in ${DEPLOY_NAMESPACE} (token=${SYNC_TOKEN})"
+          if ! EXT_SECRETS=$(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name); then
+            echo "::error::Unable to list ExternalSecrets in ${DEPLOY_NAMESPACE}; aborting forced secret refresh."
+            exit 1
+          fi
+
+          if [[ -z "${EXT_SECRETS}" ]]; then
+            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; nothing to refresh."
+          fi
+
+          for EXT_SECRET in ${EXT_SECRETS}; do
+            kubectl annotate "${EXT_SECRET}" -n "${DEPLOY_NAMESPACE}" external-secrets.io/force-sync="${SYNC_TOKEN}" --overwrite
+          done
       - name: Helm deploy to prod
         run: |
           helm upgrade "${SERVICE_NAME}" "${CHART_DIR}" \
             -f "${CHART_DIR}/values-prod.yaml" \
             --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
             --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
-            --namespace "testzeus-prod" \
+            --namespace "${DEPLOY_NAMESPACE}" \
             --create-namespace \
             --install \
             --wait \
             --rollback-on-failure \
             --server-side=false \
             --timeout 5m
+
+      - name: Collect Helm diagnostics on failure
+        if: failure()
+        run: |
+          echo "Collecting Helm diagnostics for ${SERVICE_NAME}"
+          echo "::group::Helm status"
+          HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_STATUS_OUTPUT}"
+          echo "::endgroup::"
+          echo "::group::Helm history"
+          HELM_HISTORY_OUTPUT=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_HISTORY_OUTPUT}"
+          echo "::endgroup::"
+          echo "::group::Helm release resources"
+          HELM_RESOURCES_OUTPUT=$(helm get all "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
+          echo "${HELM_RESOURCES_OUTPUT}"
+          echo "::endgroup::"
+          echo "::group::Namespace events"
+          EVENTS_OUTPUT=$(kubectl get events -n "${DEPLOY_NAMESPACE}" --sort-by=.lastTimestamp 2>&1 || true)
+          echo "${EVENTS_OUTPUT}"
+          echo "::endgroup::"
+          echo "::group::Pods"
+          PODS_OUTPUT=$(kubectl get pods -n "${DEPLOY_NAMESPACE}" -o wide 2>&1 || true)
+          echo "${PODS_OUTPUT}"
+          echo "::endgroup::"
+          if printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Evicted|Insufficient memory'; then
+            echo "::notice::Likely cause: node memory pressure or pod eviction."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'FailedScheduling|Insufficient cpu|Too many pods'; then
+            echo "::notice::Likely cause: insufficient cluster capacity for the rollout."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'ImagePullBackOff|ErrImagePull'; then
+            echo "::notice::Likely cause: image pull or registry access failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'CreateContainerConfigError|Secret .* not found|configmap .* not found'; then
+            echo "::notice::Likely cause: missing secret or config map."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'FailedMount|MountVolume|volume attach|AttachVolume'; then
+            echo "::notice::Likely cause: storage or volume attach failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Forbidden|RBAC|permission denied'; then
+            echo "::notice::Likely cause: permissions or RBAC failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'AdmissionWebhook|denied by webhook|policy violation'; then
+            echo "::notice::Likely cause: admission webhook or policy rejection."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'x509|TLS|certificate'; then
+            echo "::notice::Likely cause: TLS or certificate validation failure."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'context deadline exceeded|DeadlineExceeded|timed out'; then
+            echo "::notice::Likely cause: rollout or readiness timeout."
+          elif printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Readiness probe failed|Liveness probe failed|Back-off restarting failed container|CrashLoopBackOff|Error'; then
+            echo "::notice::Likely cause: probe failures, a crashing container, or an application startup error."
+          else
+            echo "::notice::Likely cause: review Helm status, pod events, and pod state above."
+          fi
 
       - name: Cleanup Runner IP
         if: always()
