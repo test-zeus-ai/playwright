@@ -291,12 +291,16 @@ jobs:
         run: |
           SYNC_TOKEN=$(date +%s)
           echo "Forcing ExternalSecret sync in ${DEPLOY_NAMESPACE} (token=${SYNC_TOKEN})"
-          mapfile -t EXT_SECRETS < <(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name)
-          if [[ ${#EXT_SECRETS[@]} -eq 0 ]]; then
-            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; skipping force sync."
-            exit 0
+          if ! EXT_SECRETS=$(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name); then
+            echo "::error::Unable to list ExternalSecrets in ${DEPLOY_NAMESPACE}; aborting forced secret refresh."
+            exit 1
           fi
-          for EXT_SECRET in "${EXT_SECRETS[@]}"; do
+
+          if [[ -z "${EXT_SECRETS}" ]]; then
+            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; nothing to refresh."
+          fi
+
+          for EXT_SECRET in ${EXT_SECRETS}; do
             kubectl annotate "${EXT_SECRET}" -n "${DEPLOY_NAMESPACE}" external-secrets.io/force-sync="${SYNC_TOKEN}" --overwrite
           done
       - name: Helm deploy to dev
@@ -441,8 +445,12 @@ jobs:
 
       - name: Reset stuck Helm release (if pending)
         run: |
-          STATUS=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" --output json 2>/dev/null \
-            | jq -r '.info.status' || echo "not-found")
+          if STATUS_JSON=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" --output json 2>/dev/null); then
+            STATUS=$(printf '%s' "${STATUS_JSON}" | jq -r '.info.status // "not-found"')
+          else
+            STATUS="not-found"
+          fi
+
           echo "Current release status: ${STATUS}"
           if [[ "${STATUS}" == "pending-upgrade" || "${STATUS}" == "pending-install" || "${STATUS}" == "pending-rollback" ]]; then
             echo "Release is stuck in '${STATUS}' — attempting rollback to last good revision..."
@@ -468,12 +476,16 @@ jobs:
         run: |
           SYNC_TOKEN=$(date +%s)
           echo "Forcing ExternalSecret sync in ${DEPLOY_NAMESPACE} (token=${SYNC_TOKEN})"
-          mapfile -t EXT_SECRETS < <(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name)
-          if [[ ${#EXT_SECRETS[@]} -eq 0 ]]; then
-            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; skipping force sync."
-            exit 0
+          if ! EXT_SECRETS=$(kubectl get externalsecret -n "${DEPLOY_NAMESPACE}" -o name); then
+            echo "::error::Unable to list ExternalSecrets in ${DEPLOY_NAMESPACE}; aborting forced secret refresh."
+            exit 1
           fi
-          for EXT_SECRET in "${EXT_SECRETS[@]}"; do
+
+          if [[ -z "${EXT_SECRETS}" ]]; then
+            echo "No ExternalSecrets found in ${DEPLOY_NAMESPACE}; nothing to refresh."
+          fi
+
+          for EXT_SECRET in ${EXT_SECRETS}; do
             kubectl annotate "${EXT_SECRET}" -n "${DEPLOY_NAMESPACE}" external-secrets.io/force-sync="${SYNC_TOKEN}" --overwrite
           done
       - name: Helm deploy to prod
@@ -482,7 +494,7 @@ jobs:
             -f "${CHART_DIR}/values-prod.yaml" \
             --set-string service-template.containers[0].image.repository=${{ needs.build.outputs.image_repo }} \
             --set-string service-template.containers[0].image.tag=${{ needs.build.outputs.image_tag }} \
-            --namespace "testzeus-prod" \
+            --namespace "${DEPLOY_NAMESPACE}" \
             --create-namespace \
             --install \
             --wait \
@@ -495,23 +507,23 @@ jobs:
         run: |
           echo "Collecting Helm diagnostics for ${SERVICE_NAME}"
           echo "::group::Helm status"
-          HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "testzeus-prod" 2>&1 || true)
+          HELM_STATUS_OUTPUT=$(helm status "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
           echo "${HELM_STATUS_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Helm history"
-          HELM_HISTORY_OUTPUT=$(helm history "${SERVICE_NAME}" --namespace "testzeus-prod" 2>&1 || true)
+          HELM_HISTORY_OUTPUT=$(helm history "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
           echo "${HELM_HISTORY_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Helm release resources"
-          HELM_RESOURCES_OUTPUT=$(helm get all "${SERVICE_NAME}" --namespace "testzeus-prod" 2>&1 || true)
+          HELM_RESOURCES_OUTPUT=$(helm get all "${SERVICE_NAME}" --namespace "${DEPLOY_NAMESPACE}" 2>&1 || true)
           echo "${HELM_RESOURCES_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Namespace events"
-          EVENTS_OUTPUT=$(kubectl get events -n "testzeus-prod" --sort-by=.lastTimestamp 2>&1 || true)
+          EVENTS_OUTPUT=$(kubectl get events -n "${DEPLOY_NAMESPACE}" --sort-by=.lastTimestamp 2>&1 || true)
           echo "${EVENTS_OUTPUT}"
           echo "::endgroup::"
           echo "::group::Pods"
-          PODS_OUTPUT=$(kubectl get pods -n "testzeus-prod" -o wide 2>&1 || true)
+          PODS_OUTPUT=$(kubectl get pods -n "${DEPLOY_NAMESPACE}" -o wide 2>&1 || true)
           echo "${PODS_OUTPUT}"
           echo "::endgroup::"
           if printf '%s\n%s\n' "${EVENTS_OUTPUT}" "${PODS_OUTPUT}" | grep -qiE 'Evicted|Insufficient memory'; then
