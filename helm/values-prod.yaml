@@ -65,7 +65,7 @@ service-template:
         namespace: testzeus
         sectionName: https
     hostnames:
-      - "tzviewer.stage.testzeus.app"
+      - "tzviewer.prod.testzeus.app"
     rules:
       - matches:
           - path: /
