@@ -117,7 +117,8 @@ jobs:
           cache-to: type=gha,mode=max
 
   helm4-compat:
-    if: github.ref == 'refs/heads/main-prod' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # A manual dev deploy runs it from any branch, so a feature branch can be tried on dev.
+    if: (github.ref == 'refs/heads/main-prod' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')) || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_prod == 'false' && github.event.inputs.target_env != 'main-prod')
     needs: build
     runs-on: ubuntu-latest
     env:
