@@ -20,6 +20,7 @@ import '@web/third_party/vscode/codicon.css';
 import * as ReactDOM from 'react-dom/client';
 import { WorkbenchLoader } from './ui/workbenchLoader';
 import { LiveWorkbenchLoader } from './ui/liveWorkbenchLoader';
+import { swUrl } from './swUrl';
 
 (async () => {
   const queryParams = new URLSearchParams(window.location.search);
@@ -28,7 +29,7 @@ import { LiveWorkbenchLoader } from './ui/liveWorkbenchLoader';
   if (window.location.protocol !== 'file:') {
     if (!navigator.serviceWorker)
       throw new Error(`Service workers are not supported.\nMake sure to serve the Trace Viewer (${window.location}) via HTTPS or localhost.`);
-    navigator.serviceWorker.register('sw.bundle.js');
+    navigator.serviceWorker.register(swUrl);
     if (!navigator.serviceWorker.controller) {
       await new Promise<void>(f => {
         navigator.serviceWorker.oncontrollerchange = () => f();

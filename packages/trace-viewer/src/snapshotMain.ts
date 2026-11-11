@@ -15,11 +15,12 @@
 */
 
 import { isHttpUrl } from '@isomorphic/urlMatch';
+import { swUrl } from './swUrl';
 
 (async () => {
   if (!navigator.serviceWorker)
     throw new Error(`Service workers are not supported.\nMake sure to serve the Trace Viewer (${window.location}) via HTTPS or localhost.`);
-  navigator.serviceWorker.register('sw.bundle.js');
+  navigator.serviceWorker.register(swUrl);
   if (!navigator.serviceWorker.controller)
     await new Promise(f => navigator.serviceWorker.oncontrollerchange = f);
   const traceUrl = new URL(location.href).searchParams.get('trace');
