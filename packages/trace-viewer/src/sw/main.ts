@@ -123,7 +123,7 @@ async function innerLoadTrace(traceUri: string, progress: Progress): Promise<Loa
     if (error instanceof TraceVersionError)
       throw new Error(`Could not load trace from ${traceUri}. ${error.message}`);
 
-    let message = `Could not load trace from ${traceUri}. Make sure a valid Playwright Trace is accessible over this url.`;
+    let message = `Could not load trace from ${traceUri}. Make sure a valid TestZeus Trace is accessible over this url.`;
 
     const lnaPermission = await navigator.permissions.query({ name: 'local-network-access' as PermissionName }).catch(() => { });
     if (lnaPermission && lnaPermission.state !== 'granted')

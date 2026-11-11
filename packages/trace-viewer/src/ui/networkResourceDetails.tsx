@@ -109,7 +109,7 @@ const CopyDropdown: React.FC<{
       <div className='copy-request-dropdown-menu'>
         <CopyToClipboardTextButton description='Copy as cURL' copiedDescription={copiedDescription} value={() => generateCurlCommand(model, resource)}/>
         <CopyToClipboardTextButton description='Copy as Fetch' copiedDescription={copiedDescription} value={() => generateFetchCall(model, resource)}/>
-        <CopyToClipboardTextButton description='Copy as Playwright' copiedDescription={copiedDescription} value={copyAsPlaywright}/>
+        <CopyToClipboardTextButton description='Copy as code' copiedDescription={copiedDescription} value={copyAsPlaywright}/>
       </div>
     </div>
   );
